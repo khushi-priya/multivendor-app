@@ -1,0 +1,16 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+private_uploads/
+*.log
+
+node_modules/
+.env
+.env.*
+!.env.example
+dist/
+build/
+coverage/
+.DS_Store

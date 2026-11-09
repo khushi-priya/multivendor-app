@@ -1,0 +1,37 @@
+{
+  "name": "multivendor-server",
+  "version": "1.0.0",
+  "private": true,
+  "main": "src/server.js",
+  "scripts": {
+    "dev": "nodemon src/server.js",
+    "start": "node src/server.js",
+    "migrate": "sequelize-cli db:migrate",
+    "migrate:undo": "sequelize-cli db:migrate:undo:all",
+    "seed": "node src/scripts/seed.js",
+    "test": "node --test --test-concurrency=1 tests/isolation.test.js tests/comprehensive_features.test.js",
+      "seed:catalog": "node src/seeders/seedCatalog.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "express-mysql-session": "^3.0.3",
+    "express-rate-limit": "^7.4.0",
+    "express-session": "^1.18.0",
+    "helmet": "^7.1.0",
+    "morgan": "^1.10.0",
+    "multer": "^2.5.0",
+    "mysql2": "^3.11.0",
+    "nodemailer": "^6.9.14",
+    "razorpay": "^2.9.8",
+    "sequelize": "^6.37.3",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.4",
+    "sequelize-cli": "^6.6.2",
+    "supertest": "^7.0.0"
+  }
+}
