@@ -159,9 +159,60 @@ export default function App() {
 
         {/* Existing Public URLs */}
 
-        <Route path="categories" element={<CustomerCategories />} />
+        {/* <Route path="categories" element={<CustomerCategories />} />
         <Route path="products" element={<CustomerProducts />} />
-        <Route path="products/:id" element={<CustomerProductDetail />} />
+        <Route path="products/:id" element={<CustomerProductDetail />} /> */}
+
+        
+{/* ================= STOREFRONT BROWSING ================= */}
+
+<Route element={
+  <ProtectedRoute
+    roles={['customer', 'super_admin', 'shop_user', 'shop_owner']}
+  />
+}>
+  <Route path="customer" element={<CustomerHome />} />
+  <Route path="customer/categories" element={<CustomerCategories />} />
+  <Route path="customer/products" element={<CustomerProducts />} />
+  <Route
+    path="customer/products/:id"
+    element={<CustomerProductDetail />}
+  />
+
+  {/* Existing public URL aliases */}
+  <Route path="categories" element={<CustomerCategories />} />
+  <Route path="products" element={<CustomerProducts />} />
+  <Route path="products/:id" element={<CustomerProductDetail />} />
+</Route>
+
+{/* Customer registration */}
+<Route path="customer/register" element={<CustomerRegister />} />
+
+{/* ================= CUSTOMER-ONLY FEATURES ================= */}
+
+<Route element={<ProtectedRoute roles={['customer']} />}>
+  <Route path="customer/cart" element={<CustomerCart />} />
+  <Route path="customer/wishlist" element={<CustomerWishlist />} />
+  <Route path="customer/checkout" element={<CustomerCheckout />} />
+
+  <Route path="customer/orders" element={<CustomerOrders />} />
+  <Route
+    path="customer/orders/:id"
+    element={<CustomerOrderDetail />}
+  />
+
+  <Route path="customer/payments" element={<CustomerPayments />} />
+  <Route path="customer/profile" element={<CustomerProfile />} />
+
+  {/* Existing URLs */}
+  <Route path="cart" element={<CustomerCart />} />
+  <Route path="wishlist" element={<CustomerWishlist />} />
+  <Route path="checkout" element={<CustomerCheckout />} />
+  <Route path="my-orders" element={<CustomerOrders />} />
+  <Route path="my-payments" element={<CustomerPayments />} />
+  <Route path="profile" element={<CustomerProfile />} />
+</Route>
+
 
       </Route>
 

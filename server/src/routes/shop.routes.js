@@ -83,7 +83,10 @@ const ORDER_ROLES = [
   "cashier",
   "support",
 ];
+
+
 const ATTENDANCE_ROLES = ["shop_owner", "shop_manager"];
+
 
 const page = {
   page: z.coerce.number().int().min(1).default(1),
@@ -3154,9 +3157,883 @@ router.post(
   }),
 );
 
+
+
 /* ========================================================================== */
 /*                            RETURNS & REFUNDS                               */
 /* ========================================================================== */
+
+// function getPaymentMeta(payment) {
+//   return payment.meta && typeof payment.meta === "object"
+//     ? payment.meta
+//     : {};
+// }
+
+// /**
+//  * Finalizes a refund only after the provider confirms it,
+//  * or after the shop records an actual COD refund.
+//  *
+//  * Payment.status supports paid/refunded, while Order.paymentStatus
+//  * also supports partially_refunded.
+//  */
+// async function completeReturnRefund({
+//   ret,
+//   payment,
+//   order,
+//   actorUserId,
+//   refundReference,
+//   transaction,
+// }) {
+//   await ret.update(
+//     {
+//       status: "refunded",
+//       refundReference,
+//       refundedAt: new Date(),
+//       refundedBy: actorUserId,
+//       processedBy: actorUserId,
+//     },
+//     { transaction },
+//   );
+
+//   const completedReturns = await Return.findAll({
+//     where: {
+//       shopId: order.shopId,
+//       orderId: order.id,
+//       status: "refunded",
+//     },
+//     transaction,
+//     lock: transaction.LOCK.UPDATE,
+//   });
+
+//   const refundedCents = completedReturns.reduce(
+//     (sum, item) => sum + cents(item.refundAmount),
+//     0,
+//   );
+
+//   const originalPaymentCents = cents(payment.amount);
+
+//   if (refundedCents > originalPaymentCents) {
+//     throw new AppError(
+//       409,
+//       "Completed refunds exceed the original payment amount.",
+//     );
+//   }
+
+//   const fullyRefunded = refundedCents >= originalPaymentCents;
+
+//   const meta = getPaymentMeta(payment);
+//   const reservations = { ...(meta.refundReservations || {}) };
+
+//   reservations[String(ret.id)] = {
+//     status: "processed",
+//     amount: Number(ret.refundAmount),
+//     reference: refundReference,
+//     completedAt: new Date().toISOString(),
+//   };
+
+//   await payment.update(
+//     {
+//       status: fullyRefunded ? "refunded" : "paid",
+//       meta: {
+//         ...meta,
+//         refundReservations: reservations,
+//       },
+//     },
+//     { transaction },
+//   );
+
+//   await order.update(
+//     {
+//       paymentStatus: fullyRefunded
+//         ? "refunded"
+//         : "partially_refunded",
+//     },
+//     { transaction },
+//   );
+
+//   await audit(
+//     {
+//       actorId: actorUserId,
+//       action: "return.refund_completed",
+//       entityType: "return",
+//       entityId: ret.id,
+//       shopId: order.shopId,
+//       meta: {
+//         orderId: order.id,
+//         paymentId: payment.id,
+//         refundAmount: ret.refundAmount,
+//         refundReference,
+//         paymentMethod: payment.paymentMethod,
+//         fullyRefunded,
+//       },
+//     },
+//     transaction,
+//   );
+
+//   return {
+//     return: ret,
+//     fullyRefunded,
+//     refundedAmount: moneyValue(refundedCents),
+//   };
+// }
+
+// /* ------------------------------ List Returns ------------------------------ */
+
+// router.get(
+//   "/returns",
+//   requireShopAccess(ORDER_ROLES),
+//   wrap(async (req, res) => {
+//     const items = await Return.findAll({
+//       where: { shopId: req.shop.id },
+//       include: [
+//         {
+//           model: Order,
+//           as: "order",
+//           attributes: [
+//             "id",
+//             "orderNumber",
+//             "totalAmount",
+//             "paymentMethod",
+//             "paymentStatus",
+//             "status",
+//           ],
+//         },
+//         {
+//           model: User,
+//           as: "customer",
+//           attributes: ["id", "name", "phone"],
+//         },
+//         {
+//           model: ReturnItem,
+//           as: "items",
+//           include: [
+//             {
+//               model: OrderItem,
+//               as: "orderItem",
+//             },
+//           ],
+//         },
+//         {
+//           model: User,
+//           as: "approver",
+//           attributes: ["id", "name"],
+//         },
+//         {
+//           model: User,
+//           as: "rejector",
+//           attributes: ["id", "name"],
+//         },
+//         {
+//           model: User,
+//           as: "receiver",
+//           attributes: ["id", "name"],
+//         },
+//         {
+//           model: User,
+//           as: "refundProcessor",
+//           attributes: ["id", "name"],
+//         },
+//       ],
+//       order: [["createdAt", "DESC"]],
+//     });
+
+//     res.json({ items });
+//   }),
+// );
+
+// /* -------------------------- Approve / Reject / Receive -------------------- */
+
+// router.patch(
+//   "/returns/:id",
+//   requireShopAccess(ORDER_ROLES),
+//   validate(
+//     z.object({
+//       status: z.enum(["approved", "rejected", "received"]),
+//       rejectionReason: z.string().trim().min(5).max(500).optional(),
+//       notes: z.string().trim().max(2000).optional(),
+//     }),
+//   ),
+//   wrap(async (req, res) => {
+//     const returnId = idParam(req, "id");
+
+//     const updatedReturn = await sequelize.transaction(async (t) => {
+//       const ret = await Return.findOne({
+//         where: {
+//           id: returnId,
+//           shopId: req.shop.id,
+//         },
+//         transaction: t,
+//         lock: t.LOCK.UPDATE,
+//       });
+
+//       if (!ret) {
+//         throw new AppError(404, "Return record not found.");
+//       }
+
+//       const { status, rejectionReason, notes } = req.valid;
+
+//       const transitions = {
+//         requested: ["approved", "rejected"],
+//         approved: ["received"],
+//         received: [],
+//         refund_processing: [],
+//         rejected: [],
+//         refunded: [],
+//       };
+
+//       if (!(transitions[ret.status] || []).includes(status)) {
+//         throw new AppError(
+//           409,
+//           `Cannot change return status from "${ret.status}" to "${status}".`,
+//         );
+//       }
+
+//       if (status === "rejected" && !rejectionReason) {
+//         throw new AppError(
+//           400,
+//           "A rejection reason is required.",
+//         );
+//       }
+
+//       const updates = {
+//         status,
+//         processedBy: req.user.id,
+//         notes: notes !== undefined ? notes : ret.notes,
+//       };
+
+//       if (status === "approved") {
+//         updates.approvedAt = new Date();
+//         updates.approvedBy = req.user.id;
+//       }
+
+//       if (status === "rejected") {
+//         updates.rejectedAt = new Date();
+//         updates.rejectedBy = req.user.id;
+//         updates.rejectionReason = rejectionReason;
+//       }
+
+//       if (status === "received") {
+//         updates.receivedAt = new Date();
+//         updates.receivedBy = req.user.id;
+//       }
+
+//       await ret.update(updates, { transaction: t });
+
+//       await audit(
+//         {
+//           actorId: req.user.id,
+//           action: `return.${status}`,
+//           entityType: "return",
+//           entityId: ret.id,
+//           shopId: req.shop.id,
+//           meta: {
+//             previousStatus: transitions[ret.status],
+//             status,
+//             rejectionReason: rejectionReason || null,
+//           },
+//           ip: req.ip,
+//         },
+//         t,
+//       );
+
+//       return ret;
+//     });
+
+//     const fullReturn = await Return.findByPk(updatedReturn.id, {
+//       include: [
+//         {
+//           model: ReturnItem,
+//           as: "items",
+//           include: [{ model: OrderItem, as: "orderItem" }],
+//         },
+//         { model: User, as: "approver", attributes: ["id", "name"] },
+//         { model: User, as: "rejector", attributes: ["id", "name"] },
+//         { model: User, as: "receiver", attributes: ["id", "name"] },
+//         { model: User, as: "refundProcessor", attributes: ["id", "name"] },
+//       ],
+//     });
+
+//     res.json({ return: fullReturn });
+//   }),
+// );
+
+// /* -------------------------- Process a Refund ------------------------------ */
+
+// /**
+//  * Razorpay refunds are initiated server-side.
+//  *
+//  * COD refunds are recorded only when the shop provides the real
+//  * external refund transaction reference.
+//  */
+// router.post(
+//   "/returns/:id/refund",
+//   requireShopAccess(FINANCE_ROLES),
+//   validate(
+//     z.object({
+//       refundAmount: money.refine(
+//         (value) => value > 0,
+//         "Refund amount must be greater than zero.",
+//       ),
+//       refundReference: z.string().trim().min(4).max(255).optional(),
+//       notes: z.string().trim().max(2000).optional(),
+//     }),
+//   ),
+//   wrap(async (req, res) => {
+//     const returnId = idParam(req, "id");
+//     const { refundAmount, refundReference, notes } = req.valid;
+
+//     /*
+//      * First reserve the refund inside a DB transaction.
+//      * Locking the order serializes refund reservations for that order.
+//      */
+//     const reservation = await sequelize.transaction(async (t) => {
+//       const ret = await Return.findOne({
+//         where: {
+//           id: returnId,
+//           shopId: req.shop.id,
+//         },
+//         transaction: t,
+//         lock: t.LOCK.UPDATE,
+//       });
+
+//       if (!ret) {
+//         throw new AppError(404, "Return record not found.");
+//       }
+
+//       if (ret.status !== "received") {
+//         throw new AppError(
+//           409,
+//           "The returned item must be received before processing its refund.",
+//         );
+//       }
+
+//       const order = await Order.findOne({
+//         where: {
+//           id: ret.orderId,
+//           shopId: req.shop.id,
+//         },
+//         transaction: t,
+//         lock: t.LOCK.UPDATE,
+//       });
+
+//       if (!order) {
+//         throw new AppError(404, "Associated order not found.");
+//       }
+
+//       const payment = await Payment.findOne({
+//         where: {
+//           orderId: order.id,
+//           shopId: req.shop.id,
+//         },
+//         transaction: t,
+//         lock: t.LOCK.UPDATE,
+//       });
+
+//       if (!payment) {
+//         throw new AppError(
+//           400,
+//           "A payment record is required before processing a refund.",
+//         );
+//       }
+
+//       if (payment.status !== "paid") {
+//         throw new AppError(
+//           409,
+//           "The original payment must be settled before a refund can be processed.",
+//         );
+//       }
+
+//       const previousReturns = await Return.findAll({
+//         where: {
+//           shopId: req.shop.id,
+//           orderId: order.id,
+//           status: ["refund_processing", "refunded"],
+//         },
+//         transaction: t,
+//         lock: t.LOCK.UPDATE,
+//       });
+
+//       const reservedCents = previousReturns.reduce(
+//         (sum, item) => sum + cents(item.refundAmount),
+//         0,
+//       );
+
+//       const originalPaymentCents = cents(payment.amount);
+//       const requestedRefundCents = cents(refundAmount);
+//       const remainingCents = originalPaymentCents - reservedCents;
+
+//       if (requestedRefundCents > remainingCents) {
+//         throw new AppError(
+//           400,
+//           `Refund exceeds the remaining refundable amount of ₹${moneyValue(Math.max(0, remainingCents))}.`,
+//         );
+//       }
+
+//       if (payment.paymentMethod === "cod") {
+//         if (!payment.codCollectedAt || !payment.codReconciled) {
+//           throw new AppError(
+//             409,
+//             "COD must be collected and reconciled before issuing a refund.",
+//           );
+//         }
+
+//         if (!refundReference) {
+//           throw new AppError(
+//             400,
+//             "Enter the actual COD refund UPI, bank, or cash receipt reference.",
+//           );
+//         }
+
+//         await ret.update(
+//           {
+//             refundAmount: Number(moneyValue(requestedRefundCents)),
+//             notes: notes || ret.notes,
+//             refundProcessingAt: new Date(),
+//           },
+//           { transaction: t },
+//         );
+
+//         const result = await completeReturnRefund({
+//           ret,
+//           payment,
+//           order,
+//           actorUserId: req.user.id,
+//           refundReference,
+//           transaction: t,
+//         });
+
+//         return {
+//           method: "cod",
+//           result,
+//         };
+//       }
+
+//       if (payment.paymentMethod !== "razorpay") {
+//         throw new AppError(
+//           400,
+//           "Unsupported payment method for refund.",
+//         );
+//       }
+
+//       if (!payment.razorpayPaymentId) {
+//         throw new AppError(
+//           409,
+//           "The original Razorpay payment ID is missing.",
+//         );
+//       }
+
+//       const meta = getPaymentMeta(payment);
+//       const reservations = { ...(meta.refundReservations || {}) };
+
+//       if (reservations[String(ret.id)]) {
+//         throw new AppError(
+//           409,
+//           "A refund has already been initiated for this return. Verify its provider status before retrying.",
+//         );
+//       }
+
+//       reservations[String(ret.id)] = {
+//         status: "initiating",
+//         amount: Number(moneyValue(requestedRefundCents)),
+//         initiatedAt: new Date().toISOString(),
+//       };
+
+//       await ret.update(
+//         {
+//           status: "refund_processing",
+//           refundAmount: Number(moneyValue(requestedRefundCents)),
+//           refundProcessingAt: new Date(),
+//           processedBy: req.user.id,
+//           notes: notes || ret.notes,
+//         },
+//         { transaction: t },
+//       );
+
+//       await payment.update(
+//         {
+//           meta: {
+//             ...meta,
+//             refundReservations: reservations,
+//           },
+//         },
+//         { transaction: t },
+//       );
+
+//       return {
+//         method: "razorpay",
+//         returnId: ret.id,
+//         paymentId: payment.id,
+//         razorpayPaymentId: payment.razorpayPaymentId,
+//         orderId: order.id,
+//         amount: Number(moneyValue(requestedRefundCents)),
+//       };
+//     });
+
+//     if (reservation.method === "cod") {
+//       return res.json({
+//         message: "COD refund recorded successfully.",
+//         ...reservation.result,
+//       });
+//     }
+
+//     /*
+//      * Provider network call is deliberately outside the database
+//      * transaction. Do not hold SQL locks during an external API request.
+//      */
+//     const providerRefund = await createRazorpayRefund(
+//       reservation.razorpayPaymentId,
+//       reservation.amount,
+//       `RETURN-${reservation.returnId}`,
+//       {
+//         returnId: String(reservation.returnId),
+//         orderId: String(reservation.orderId),
+//         shopId: String(req.shop.id),
+//       },
+//     );
+
+//     if (!providerRefund || !providerRefund.id) {
+//       throw new AppError(
+//         502,
+//         "Razorpay did not return a refund reference. Verify the provider dashboard before retrying.",
+//       );
+//     }
+
+//     const providerStatus = String(providerRefund.status || "").toLowerCase();
+
+//     const result = await sequelize.transaction(async (t) => {
+//       const ret = await Return.findOne({
+//         where: {
+//           id: reservation.returnId,
+//           shopId: req.shop.id,
+//         },
+//         transaction: t,
+//         lock: t.LOCK.UPDATE,
+//       });
+
+//       if (!ret) {
+//         throw new AppError(404, "Return record not found.");
+//       }
+
+//       const order = await Order.findOne({
+//         where: {
+//           id: reservation.orderId,
+//           shopId: req.shop.id,
+//         },
+//         transaction: t,
+//         lock: t.LOCK.UPDATE,
+//       });
+
+//       if (!order) {
+//         throw new AppError(404, "Associated order not found.");
+//       }
+
+//       const payment = await Payment.findOne({
+//         where: {
+//           id: reservation.paymentId,
+//           shopId: req.shop.id,
+//         },
+//         transaction: t,
+//         lock: t.LOCK.UPDATE,
+//       });
+
+//       if (!payment) {
+//         throw new AppError(404, "Payment record not found.");
+//       }
+
+//       if (providerStatus === "processed") {
+//         return completeReturnRefund({
+//           ret,
+//           payment,
+//           order,
+//           actorUserId: req.user.id,
+//           refundReference: providerRefund.id,
+//           transaction: t,
+//         });
+//       }
+
+//       if (providerStatus === "failed") {
+//         const meta = getPaymentMeta(payment);
+//         const reservations = { ...(meta.refundReservations || {}) };
+//         delete reservations[String(ret.id)];
+
+//         await payment.update(
+//           {
+//             meta: {
+//               ...meta,
+//               refundReservations: reservations,
+//             },
+//           },
+//           { transaction: t },
+//         );
+
+//         await ret.update(
+//           {
+//             status: "received",
+//             refundAmount: null,
+//             refundReference: null,
+//             notes: [
+//               ret.notes,
+//               "Razorpay reported that the refund failed. It can be reviewed and retried.",
+//             ]
+//               .filter(Boolean)
+//               .join("\n"),
+//           },
+//           { transaction: t },
+//         );
+
+//         return {
+//           return: ret,
+//           providerStatus: "failed",
+//         };
+//       }
+
+//       // Razorpay may accept a refund and process it asynchronously.
+//       const meta = getPaymentMeta(payment);
+//       const reservations = { ...(meta.refundReservations || {}) };
+
+//       reservations[String(ret.id)] = {
+//         status: "pending",
+//         amount: reservation.amount,
+//         refundId: providerRefund.id,
+//         initiatedAt: reservations[String(ret.id)]?.initiatedAt || null,
+//       };
+
+//       await payment.update(
+//         {
+//           meta: {
+//             ...meta,
+//             refundReservations: reservations,
+//           },
+//         },
+//         { transaction: t },
+//       );
+
+//       await ret.update(
+//         {
+//           refundReference: providerRefund.id,
+//         },
+//         { transaction: t },
+//       );
+
+//       return {
+//         return: ret,
+//         providerStatus: providerStatus || "pending",
+//       };
+//     });
+
+//     res.json({
+//       message:
+//         providerStatus === "processed"
+//           ? "Razorpay refund completed successfully."
+//           : providerStatus === "failed"
+//             ? "Razorpay refund failed. You can review and retry it."
+//             : "Refund submitted to Razorpay and is awaiting confirmation.",
+//       ...result,
+//     });
+//   }),
+// );
+
+// /* ------------------------ Refresh Razorpay Refund ------------------------ */
+
+// /**
+//  * Use this endpoint to check a pending Razorpay refund.
+//  * It does not create another refund.
+//  */
+// router.post(
+//   "/returns/:id/refresh-refund",
+//   requireShopAccess(FINANCE_ROLES),
+//   wrap(async (req, res) => {
+//     const returnId = idParam(req, "id");
+
+//     const snapshot = await sequelize.transaction(async (t) => {
+//       const ret = await Return.findOne({
+//         where: {
+//           id: returnId,
+//           shopId: req.shop.id,
+//         },
+//         transaction: t,
+//         lock: t.LOCK.UPDATE,
+//       });
+
+//       if (!ret) {
+//         throw new AppError(404, "Return record not found.");
+//       }
+
+//       if (ret.status !== "refund_processing" || !ret.refundReference) {
+//         throw new AppError(
+//           409,
+//           "This return does not have a pending Razorpay refund to verify.",
+//         );
+//       }
+
+//       const payment = await Payment.findOne({
+//         where: {
+//           orderId: ret.orderId,
+//           shopId: req.shop.id,
+//           paymentMethod: "razorpay",
+//         },
+//         transaction: t,
+//         lock: t.LOCK.UPDATE,
+//       });
+
+//       if (!payment || !payment.razorpayPaymentId) {
+//         throw new AppError(
+//           404,
+//           "Original Razorpay payment record not found.",
+//         );
+//       }
+
+//       return {
+//         returnId: ret.id,
+//         refundId: ret.refundReference,
+//         paymentId: payment.id,
+//         razorpayPaymentId: payment.razorpayPaymentId,
+//         orderId: ret.orderId,
+//       };
+//     });
+
+//     const providerRefund = await fetchRazorpayRefund(
+//       snapshot.razorpayPaymentId,
+//       snapshot.refundId,
+//     );
+
+//     const providerStatus = String(providerRefund.status || "").toLowerCase();
+
+//     const updatedReturn = await sequelize.transaction(async (t) => {
+//       const ret = await Return.findOne({
+//         where: {
+//           id: snapshot.returnId,
+//           shopId: req.shop.id,
+//         },
+//         transaction: t,
+//         lock: t.LOCK.UPDATE,
+//       });
+
+//       if (!ret) {
+//         throw new AppError(404, "Return record not found.");
+//       }
+
+//       if (ret.status === "refunded") {
+//         return ret;
+//       }
+
+//       const order = await Order.findOne({
+//         where: {
+//           id: snapshot.orderId,
+//           shopId: req.shop.id,
+//         },
+//         transaction: t,
+//         lock: t.LOCK.UPDATE,
+//       });
+
+//       const payment = await Payment.findOne({
+//         where: {
+//           id: snapshot.paymentId,
+//           shopId: req.shop.id,
+//         },
+//         transaction: t,
+//         lock: t.LOCK.UPDATE,
+//       });
+
+//       if (!order || !payment) {
+//         throw new AppError(404, "Associated order or payment not found.");
+//       }
+
+//       if (providerStatus === "processed") {
+//         await completeReturnRefund({
+//           ret,
+//           payment,
+//           order,
+//           actorUserId: req.user.id,
+//           refundReference: snapshot.refundId,
+//           transaction: t,
+//         });
+//       } else if (providerStatus === "failed") {
+//         const meta = getPaymentMeta(payment);
+//         const reservations = { ...(meta.refundReservations || {}) };
+//         delete reservations[String(ret.id)];
+
+//         await payment.update(
+//           {
+//             meta: {
+//               ...meta,
+//               refundReservations: reservations,
+//             },
+//           },
+//           { transaction: t },
+//         );
+
+//         await ret.update(
+//           {
+//             status: "received",
+//             refundAmount: null,
+//             refundReference: null,
+//             notes: [
+//               ret.notes,
+//               "Razorpay confirmed that this refund failed.",
+//             ]
+//               .filter(Boolean)
+//               .join("\n"),
+//           },
+//           { transaction: t },
+//         );
+//       }
+
+//       return ret;
+//     });
+
+//     res.json({
+//       message:
+//         providerStatus === "processed"
+//           ? "Refund confirmed by Razorpay."
+//           : providerStatus === "failed"
+//             ? "Razorpay confirmed that the refund failed."
+//             : "Razorpay refund is still processing.",
+//       providerStatus,
+//       return: updatedReturn,
+//     });
+//   }),
+// );
+
+// /* ------------------------------- Refund List ------------------------------ */
+
+// router.get(
+//   "/refunds",
+//   requireShopAccess(ORDER_ROLES),
+//   wrap(async (req, res) => {
+//     const items = await Return.findAll({
+//       where: {
+//         shopId: req.shop.id,
+//         status: "refunded",
+//       },
+//       include: [
+//         {
+//           model: Order,
+//           as: "order",
+//         },
+//         {
+//           model: User,
+//           as: "customer",
+//           attributes: ["id", "name", "phone"],
+//         },
+//         {
+//           model: ReturnItem,
+//           as: "items",
+//           include: [{ model: OrderItem, as: "orderItem" }],
+//         },
+//         {
+//           model: User,
+//           as: "refundProcessor",
+//           attributes: ["id", "name"],
+//         },
+//       ],
+//       order: [["refundedAt", "DESC"]],
+//     });
+
+//     res.json({ items });
+//   }),
+// );
+
 router.get(
   "/returns",
   requireShopAccess(ORDER_ROLES),

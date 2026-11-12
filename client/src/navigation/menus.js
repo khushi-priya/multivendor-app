@@ -4,22 +4,55 @@
 // Only menus for the signed-in role are returned.
 import { hasPermission } from '../services/permissions.js';
 
+// const superAdmin = [
+//   { label: 'Dashboard', to: '/admin', end: true },
+//   {
+//     label: 'Shops',
+//     children: [
+//       { label: 'Shop Categories', to: '/admin/shop-categories' },
+
+//       { label: 'All Shops', to: '/admin/shops' },
+//       { label: 'Manage Employees', to: '/admin/employees' },
+//       { label: 'Orders', to: '/admin/orders' },
+      
+
+//       { label: 'Reports', to: '/admin/reports' },
+//       { label: 'Wholesalers', to: '/admin/wholesalers' },
+//     ],
+//   },
+//   {
+//     label: 'Catalog',
+//     children: [
+//       { label: 'Manage Categories', to: '/admin/catalog/categories' },
+//       { label: 'Manage Subcategories', to: '/admin/catalog/subcategories' },
+//       { label: 'Manage Brands', to: '/admin/catalog/brands' },
+//       { label: 'Manage Variants', to: '/admin/catalog/attributes' },
+//       { label: 'Manage Products', to: '/admin/catalog/products' },
+//     ],
+//   },
+//   // { label: 'Wholesalers', to: '/admin/wholesalers' },
+//   //{ label: 'Shop–Wholesaler Access', to: '/admin/access' },
+//   { label: 'Audit Logs', to: '/admin/audit-logs' },
+// ];
+
 const superAdmin = [
   { label: 'Dashboard', to: '/admin', end: true },
+
+  // Super Admin can browse the customer-facing storefront
+  { label: 'Customer Store', to: '/customer', end: true },
+
   {
     label: 'Shops',
     children: [
       { label: 'Shop Categories', to: '/admin/shop-categories' },
-
       { label: 'All Shops', to: '/admin/shops' },
       { label: 'Manage Employees', to: '/admin/employees' },
       { label: 'Orders', to: '/admin/orders' },
-      
-
       { label: 'Reports', to: '/admin/reports' },
       { label: 'Wholesalers', to: '/admin/wholesalers' },
     ],
   },
+
   {
     label: 'Catalog',
     children: [
@@ -30,12 +63,9 @@ const superAdmin = [
       { label: 'Manage Products', to: '/admin/catalog/products' },
     ],
   },
-  // { label: 'Wholesalers', to: '/admin/wholesalers' },
-  //{ label: 'Shop–Wholesaler Access', to: '/admin/access' },
+
   { label: 'Audit Logs', to: '/admin/audit-logs' },
 ];
-
-
 
 // const wholesalerMenu = {
 //   label: 'Wholesaler Dashboard',

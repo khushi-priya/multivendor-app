@@ -12,6 +12,9 @@ const iconPath = (label = '') => {
   if (key.includes('dashboard') || key === 'home')
     return 'M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z';
 
+  if (key.includes('customer store'))
+  return 'M3 3h2l2.5 12h10.8l2-8H6M9 19h.01M17 19h.01M9 8V6a3 3 0 0 1 6 0v2';
+
   if (key.includes('shop') || key.includes('store'))
     return 'M3 10h18M5 10V6l2-3h10l2 3v4M5 10v11h14V10M9 21v-7h6v7';
 
@@ -64,7 +67,18 @@ export default function Sidebar({
   const location = useLocation();
   const navigate = useNavigate();
 
-  const items = menuFor(user);
+  const items = [
+  ...menuFor(user),
+  ...(user?.role === 'super_admin'
+    ? [
+        {
+          label: 'Customer Store',
+          to: '/customer',
+          end: true,
+        },
+      ]
+    : []),
+];
 
   const close = () => setMobileOpen(false);
 
