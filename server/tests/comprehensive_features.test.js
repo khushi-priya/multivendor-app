@@ -56,6 +56,7 @@ let deliveryEmail = `delivery-${run}@test.local`;
 let agentOwnerA, agentOwnerB, agentCustomer, agentDelivery;
 let wholesalerId;
 let productIdForArchive;
+let productVariantIdForSellerFlow;
 let couponCodeForCheckout;
 let couponIdForCheckout;
 
@@ -367,7 +368,12 @@ test("Catalog product with dynamic variants and shop listing", async () => {
   assert.ok(ownCatalog.body.items.some((item) => item.id === productId));
   assert.equal(
     otherCatalog.body.items.some((item) => item.id === productId),
-    false,
+    true,
+  );
+  assert.equal(
+    otherCatalog.body.items.find((item) => item.id === productId)
+      .variants[0].sellerListing,
+    null,
   );
   assert.equal(
     (
@@ -392,6 +398,7 @@ test("Catalog product with dynamic variants and shop listing", async () => {
     (item) => item.id === productId,
   );
   const firstVariant = savedProduct.variants[0];
+  productVariantIdForSellerFlow = firstVariant.id;
   const changedSku = `EDIT-${run}`;
   const edited = await agentOwnerA
     .patch(`/api/v1/shop/catalog/products/${productId}`)
@@ -440,20 +447,22 @@ test("Catalog product with dynamic variants and shop listing", async () => {
   assert.equal(Number(savedListing.retailPrice), 675);
   assert.equal(savedListing.isActive, false);
   assert.equal(savedInventory.quantity, 13);
-  await SellerListing.create({
-    shopId: shopBId,
-    productId,
-    productVariantId: firstVariant.id,
-    retailPrice: 800,
-    isActive: false,
-  });
-  await Inventory.create({
-    shopId: shopBId,
-    productId,
-    productVariantId: firstVariant.id,
-    quantity: 7,
-    lowStockThreshold: 5,
-  });
+  await savedVariant.update({ isActive: true });
+  const secondShopListing = await agentOwnerB
+    .patch(`/api/v1/shop/catalog/products/${productId}/listing`)
+    .set(H)
+    .send({
+      variants: [{
+        id: firstVariant.id,
+        retailPrice: 800,
+        quantity: 7,
+        isActive: true,
+        gstApplicable: true,
+        gstRate: 5,
+        priceIncludesGst: true,
+      }],
+    });
+  assert.equal(secondShopListing.status, 200);
   const nowShared = await agentOwnerA.get("/api/v1/shop/catalog/products");
   assert.equal(
     nowShared.body.items.find((item) => item.id === productId)
@@ -496,12 +505,8 @@ test("Catalog product with dynamic variants and shop listing", async () => {
     where: { shopId: shopBId, productVariantId: firstVariant.id },
   });
   assert.equal(Number(otherShopListing.retailPrice), 800);
-  assert.equal(otherShopListing.isActive, false);
-  await Inventory.destroy({
-    where: { shopId: shopBId, productVariantId: firstVariant.id },
-  });
-  await otherShopListing.destroy();
-  // Restore availability for the subsequent storefront/checkout integration test.
+  assert.equal(otherShopListing.isActive, true);
+  // Restore shop A availability; keep shop B's independent listing for storefront checks.
   const restored = await agentOwnerA
     .patch(`/api/v1/shop/catalog/products/${productId}/listing`)
     .set(H)
@@ -1518,16 +1523,43 @@ test("Customer adds to cart and completes checkout with COD and inventory deduct
   const addressId = addrRes.body.address.id;
 
   // Get product variant
-  const prods = await agentCustomer.get("/api/v1/store/products");
-  assert.equal(prods.status, 200);
-  const variant = prods.body.items[0].variants[0];
-  const initialStock = variant.listings[0].stock;
+  const productDetail = await agentCustomer.get(
+    `/api/v1/store/products/${productIdForArchive}`,
+  );
+  assert.equal(productDetail.status, 200);
+  const variant = productDetail.body.product.variants.find(
+    (item) => item.id === productVariantIdForSellerFlow,
+  );
+  const sellerResponse = await agentCustomer.get(
+    `/api/v1/store/products/${productIdForArchive}?variantId=${productVariantIdForSellerFlow}`,
+  );
+  assert.equal(sellerResponse.status, 200);
+  assert.deepEqual(
+    sellerResponse.body.sellers.map((seller) => seller.shopId).sort(),
+    [shopAId, shopBId].sort(),
+  );
+  const shopASeller = sellerResponse.body.sellers.find((seller) => seller.shopId === shopAId);
+  const shopBSeller = sellerResponse.body.sellers.find((seller) => seller.shopId === shopBId);
+  assert.notEqual(shopASeller.sellingPrice, shopBSeller.sellingPrice);
+  const otherVariant = productDetail.body.product.variants.find(
+    (item) => item.id !== productVariantIdForSellerFlow,
+  );
+  const otherVariantSellers = await agentCustomer.get(
+    `/api/v1/store/products/${productIdForArchive}?variantId=${otherVariant.id}`,
+  );
+  assert.equal(otherVariantSellers.status, 200);
+  assert.equal(
+    otherVariantSellers.body.sellers.some((seller) => seller.shopId === shopBId),
+    false,
+  );
+  const initialStock = shopASeller.availableStock;
   const mismatchedProduct = await agentCustomer
     .post("/api/v1/customer/cart")
     .set(H)
     .send({
       shopId: shopAId,
-      productId: prods.body.items[0].id + 100000,
+      sellerListingId: shopASeller.listingId,
+      productId: productIdForArchive + 100000,
       productVariantId: variant.id,
       quantity: 1,
     });
@@ -1539,11 +1571,25 @@ test("Customer adds to cart and completes checkout with COD and inventory deduct
     .set(H)
     .send({
       shopId: shopAId,
-      productId: prods.body.items[0].id,
+      sellerListingId: shopASeller.listingId,
+      productId: productIdForArchive,
       productVariantId: variant.id,
       quantity: 2,
     });
   assert.equal(cartRes.status, 201);
+  const crossShopAdd = await agentCustomer
+    .post("/api/v1/customer/cart")
+    .set(H)
+    .send({
+      sellerListingId: shopBSeller.listingId,
+      productId: productIdForArchive,
+      productVariantId: variant.id,
+      quantity: 1,
+    });
+  assert.equal(crossShopAdd.status, 409);
+  assert.match(crossShopAdd.body.message, /complete.*checkout|clear.*cart/i);
+  const cartContents = await agentCustomer.get("/api/v1/customer/cart");
+  assert.equal(cartContents.body.carts[0].items[0].sellerListingId, shopASeller.listingId);
 
   const quoteWithCoupon = () =>
     agentCustomer.post("/api/v1/customer/checkout/quote").set(H).send({
@@ -1623,6 +1669,7 @@ test("Customer adds to cart and completes checkout with COD and inventory deduct
     });
   assert.equal(checkRes.status, 201);
   const orderId = checkRes.body.order.id;
+  assert.equal(checkRes.body.order.items[0].sellerListingId, shopASeller.listingId);
   assert.equal(checkRes.body.order.discountAmount, "50.00");
   assert.equal(checkRes.body.order.couponCode, couponCodeForCheckout);
   const persistedCoupon = await Coupon.findByPk(couponIdForCheckout);
@@ -1665,7 +1712,7 @@ test("Customer adds to cart and completes checkout with COD and inventory deduct
   assert.ok(shopOrder, "the authenticated shop sees its customer order");
   assert.equal(shopOrder.shopId, shopAId);
   assert.equal(shopOrder.items.length, 1);
-  assert.equal(shopOrder.items[0].productId, prods.body.items[0].id);
+  assert.equal(shopOrder.items[0].productId, productIdForArchive);
   assert.ok(shopOrder.items.every((item) => item.orderId === orderId));
 
   const ownerBOrders = await agentOwnerB.get("/api/v1/shop/orders");
@@ -1709,6 +1756,10 @@ test("Customer adds to cart and completes checkout with COD and inventory deduct
     (i) => i.productVariantId === variant.id,
   );
   assert.equal(invRow.quantity, initialStock - 2);
+  const shopBInventory = await Inventory.findOne({
+    where: { shopId: shopBId, productVariantId: variant.id },
+  });
+  assert.equal(shopBInventory.quantity, shopBSeller.availableStock);
 
   // Shop Owner creates delivery employee and assigns delivery
   deliveryEmail = `deliver-${run}@test.local`;

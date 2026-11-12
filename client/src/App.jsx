@@ -65,6 +65,7 @@ import ShopDelivery from './pages/shop/delivery/Delivery.jsx';
 import ShopReports from './pages/shop/reports/Reports.jsx';
 import ShopSettings from './pages/shop/settings/Settings.jsx';
 import ShopCoupons from './pages/shop/Coupons.jsx';
+import ShopReturns from './pages/shop/orders/Returns.jsx';
 
 // Delivery Associate
 import DeliveryAssignments from './pages/delivery/Deliveries.jsx';
@@ -201,6 +202,7 @@ export default function App() {
           <Route path="audit-logs" element={<AuditLogs />} />
 
           <Route path="orders" element={<Orders />} />
+ 
           <Route path="reports" element={<Reports />} />
 
           <Route path="*" element={<NotImplemented />} />
@@ -390,6 +392,15 @@ export default function App() {
             path="orders"
             element={<ProtectedRoute permission="orders.view"><ShopOrders /></ProtectedRoute>}
           />
+          <Route
+  path="returns"
+  element={
+    <ProtectedRoute permission="returns.view">
+      <ShopReturns />
+    </ProtectedRoute>
+  }
+/>
+
           <Route
             path="payments"
             element={<ProtectedRoute permission="payments.view"><ShopPayments /></ProtectedRoute>}

@@ -193,6 +193,7 @@ export default function CustomerWishlist() {
     try {
       await api.post('/customer/cart', {
         shopId: option.listing.shopId,
+        sellerListingId: Number(option.listing.id),
         productId: product.id,
         productVariantId: option.variant.id,
         quantity: 1,

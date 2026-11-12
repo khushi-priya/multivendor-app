@@ -204,6 +204,7 @@ function calculateOrderPricing({ items, shop, address }) {
     return {
       productId: listing.productId,
       productVariantId: variant.id,
+      sellerListingId: listing.id,
       productName: product.name,
       variantName: variant.variantName,
       sku: variant.sku,

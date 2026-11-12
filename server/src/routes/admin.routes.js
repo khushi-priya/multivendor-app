@@ -865,6 +865,17 @@ router.delete(
 );
 
 /* ---------------------------- wholesalers --------------------------- */
+// const wholesalerSchema = z.object({
+//   name: z.string().trim().min(2, "Name is required").max(150),
+//   contactPerson: optional(z.string().trim().min(2).max(120)),
+//   contactEmail: optional(
+//     z.string().trim().toLowerCase().email("Enter a valid email").max(190),
+//   ),
+//   contactPhone: optional(phone),
+//   address: optional(z.string().trim().max(500)),
+//   gstNumber: optionalGst,
+//   status: z.enum(["active", "inactive"]).default("active"),
+// });
 const wholesalerSchema = z.object({
   name: z.string().trim().min(2, "Name is required").max(150),
   contactPerson: optional(z.string().trim().min(2).max(120)),
@@ -875,6 +886,7 @@ const wholesalerSchema = z.object({
   address: optional(z.string().trim().max(500)),
   gstNumber: optionalGst,
   status: z.enum(["active", "inactive"]).default("active"),
+  shopId: z.coerce.number().int().positive().optional(),
 });
 
 router.get(
@@ -902,26 +914,73 @@ router.post(
   "/wholesalers",
   validate(wholesalerSchema),
   wrap(async (req, res) => {
-    try {
-      const item = await Wholesaler.create(req.valid);
-      await audit({
-        actorId: req.user.id,
-        action: "wholesaler.created",
-        entityType: "wholesaler",
-        entityId: item.id,
-        meta: { name: item.name },
-        ip: req.ip,
+    const { shopId, ...wholesalerData } = req.valid;
+
+    if (!shopId) {
+      throw new AppError(422, "Please select a shop.", {
+        shopId: ["Shop is required"],
       });
-      res.status(201).json({ item });
-    } catch (err) {
-      if (err.name === "SequelizeUniqueConstraintError")
-        throw new AppError(409, "A wholesaler with this name already exists.", {
-          name: ["Already exists"],
+    }
+
+    try {
+      const result = await sequelize.transaction(async (t) => {
+        const shop = await Shop.findByPk(shopId, {
+          transaction: t,
+          lock: t.LOCK.UPDATE,
         });
+
+        if (!shop) {
+          throw new AppError(404, "Selected shop not found.");
+        }
+
+        const item = await Wholesaler.create(wholesalerData, {
+          transaction: t,
+        });
+
+        await WholesalerShopAccess.create(
+          {
+            shopId: shop.id,
+            wholesalerId: item.id,
+            grantedBy: req.user.id,
+          },
+          { transaction: t },
+        );
+
+        await audit(
+          {
+            actorId: req.user.id,
+            action: "wholesaler.created",
+            entityType: "wholesaler",
+            entityId: item.id,
+            meta: {
+              name: item.name,
+              shopId: shop.id,
+              shopName: shop.name,
+            },
+            ip: req.ip,
+          },
+          t,
+        );
+
+        return item;
+      });
+
+      res.status(201).json({ item: result });
+    } catch (err) {
+      if (err.name === "SequelizeUniqueConstraintError") {
+        throw new AppError(
+          409,
+          "A wholesaler with this name already exists.",
+          { name: ["Already exists"] },
+        );
+      }
+
       throw err;
     }
   }),
 );
+
+
 
 router.patch(
   "/wholesalers/:id",
@@ -1043,26 +1102,110 @@ router.put(
 );
 
 /* ---------------------------- audit logs --------------------------- */
+// router.get(
+//   "/audit-logs",
+//   validate(
+//     z.object({ ...page, action: z.string().trim().max(80).optional() }),
+//     "query",
+//   ),
+//   wrap(async (req, res) => {
+//     const { page: p, pageSize, action } = req.valid;
+//     const where = action
+//       ? { action: { [Op.like]: `${likeEscape(action)}%` } }
+//       : {};
+//     const { rows, count } = await AuditLog.findAndCountAll({
+//       where,
+//       include: [
+//         { model: User, as: "actor", attributes: ["id", "name", "email"] },
+//       ],
+//       order: [["id", "DESC"]],
+//       limit: pageSize,
+//       offset: (p - 1) * pageSize,
+//     });
+//     res.json({
+//       items: rows.map((r) => ({
+//         id: r.id,
+//         action: r.action,
+//         entityType: r.entityType,
+//         entityId: r.entityId,
+//         shopId: r.shopId,
+//         meta: r.meta,
+//         actor: r.actor
+//           ? { id: r.actor.id, name: r.actor.name, email: r.actor.email }
+//           : null,
+//         createdAt: r.createdAt,
+//       })),
+//       total: count,
+//       page: p,
+//       pageSize,
+//     });
+//   }),
+// );
+
+
 router.get(
   "/audit-logs",
   validate(
-    z.object({ ...page, action: z.string().trim().max(80).optional() }),
+    z.object({
+      ...page,
+      action: z.string().trim().max(80).optional(),
+      from: z.string().optional(),
+      to: z.string().optional(),
+    }).refine(
+      (v) => {
+        if (v.from && Number.isNaN(Date.parse(v.from))) return false;
+        if (v.to && Number.isNaN(Date.parse(v.to))) return false;
+        if (v.from && v.to && new Date(v.from) >= new Date(v.to)) {
+          return false;
+        }
+        return true;
+      },
+      {
+        message: "Invalid audit log date range",
+      }
+    ),
     "query",
   ),
   wrap(async (req, res) => {
-    const { page: p, pageSize, action } = req.valid;
-    const where = action
-      ? { action: { [Op.like]: `${likeEscape(action)}%` } }
-      : {};
+    const { page: p, pageSize, action, from, to } = req.valid;
+
+    const where = {};
+
+    if (action) {
+      where.action = {
+        [Op.like]: `${likeEscape(action)}%`,
+      };
+    }
+
+    // Date filtering uses the browser's local calendar boundaries,
+    // converted to ISO timestamps by the frontend.
+    if (from || to) {
+      where.createdAt = {};
+
+      if (from) {
+        where.createdAt[Op.gte] = new Date(from);
+      }
+
+      if (to) {
+        where.createdAt[Op.lt] = new Date(to);
+      }
+    }
+
     const { rows, count } = await AuditLog.findAndCountAll({
       where,
       include: [
-        { model: User, as: "actor", attributes: ["id", "name", "email"] },
+        {
+          model: User,
+          as: "actor",
+          attributes: ["id", "name", "email"],
+        },
       ],
       order: [["id", "DESC"]],
       limit: pageSize,
       offset: (p - 1) * pageSize,
+      distinct: true,
     });
+
     res.json({
       items: rows.map((r) => ({
         id: r.id,
@@ -1072,7 +1215,11 @@ router.get(
         shopId: r.shopId,
         meta: r.meta,
         actor: r.actor
-          ? { id: r.actor.id, name: r.actor.name, email: r.actor.email }
+          ? {
+              id: r.actor.id,
+              name: r.actor.name,
+              email: r.actor.email,
+            }
           : null,
         createdAt: r.createdAt,
       })),
@@ -1082,6 +1229,7 @@ router.get(
     });
   }),
 );
+
 
 /* ------------------------ commission settings ----------------------- */
 router.get(
@@ -1140,6 +1288,48 @@ router.put(
 );
 
 /* ----------------------- platform orders & activity ----------------- */
+// router.get(
+//   "/orders",
+//   validate(
+//     z.object({
+//       ...page,
+//       status: z.string().optional(),
+//       paymentStatus: z.string().optional(),
+//       shopId: z.coerce.number().int().positive().optional(),
+//       q: z.string().trim().max(100).optional(),
+//     }),
+//     "query",
+//   ),
+//   wrap(async (req, res) => {
+//     const { page: p, pageSize, status, paymentStatus, shopId, q } = req.valid;
+//     const where = {};
+//     if (status) where.status = status;
+//     if (paymentStatus) where.paymentStatus = paymentStatus;
+//     if (shopId) where.shopId = shopId;
+//     if (q) where.orderNumber = { [Op.like]: `%${likeEscape(q)}%` };
+
+//     const { rows, count } = await Order.findAndCountAll({
+//       where,
+//       include: [
+//         { model: Shop, as: "shop", attributes: ["id", "name"] },
+//         {
+//           model: User,
+//           as: "customer",
+//           attributes: ["id", "name", "email", "phone"],
+//         },
+//         { model: OrderItem, as: "items" },
+//       ],
+//       order: [["createdAt", "DESC"]],
+//       limit: pageSize,
+//       offset: (p - 1) * pageSize,
+//       distinct: true,
+//     });
+
+//     res.json({ items: rows, total: count, page: p, pageSize });
+//   }),
+// );
+
+/* ----------------------- platform orders & activity ----------------- */
 router.get(
   "/orders",
   validate(
@@ -1153,23 +1343,76 @@ router.get(
     "query",
   ),
   wrap(async (req, res) => {
-    const { page: p, pageSize, status, paymentStatus, shopId, q } = req.valid;
+    const {
+      page: p,
+      pageSize,
+      status,
+      paymentStatus,
+      shopId,
+      q,
+    } = req.valid;
+
     const where = {};
+
+    // Existing filters
     if (status) where.status = status;
     if (paymentStatus) where.paymentStatus = paymentStatus;
     if (shopId) where.shopId = shopId;
-    if (q) where.orderNumber = { [Op.like]: `%${likeEscape(q)}%` };
+
+    // Search by order number OR shop name
+    if (q) {
+      const searchTerm = `%${likeEscape(q)}%`;
+
+      // Find shops whose names match the search text
+      const matchingShops = await Shop.findAll({
+        attributes: ["id"],
+        where: {
+          name: {
+            [Op.like]: searchTerm,
+          },
+        },
+        raw: true,
+      });
+
+      const matchingShopIds = matchingShops.map((shop) => shop.id);
+
+      // Match either the order number or one of the matching shops
+      const searchConditions = [
+        {
+          orderNumber: {
+            [Op.like]: searchTerm,
+          },
+        },
+      ];
+
+      if (matchingShopIds.length > 0) {
+        searchConditions.push({
+          shopId: {
+            [Op.in]: matchingShopIds,
+          },
+        });
+      }
+
+      where[Op.or] = searchConditions;
+    }
 
     const { rows, count } = await Order.findAndCountAll({
       where,
       include: [
-        { model: Shop, as: "shop", attributes: ["id", "name"] },
+        {
+          model: Shop,
+          as: "shop",
+          attributes: ["id", "name"],
+        },
         {
           model: User,
           as: "customer",
           attributes: ["id", "name", "email", "phone"],
         },
-        { model: OrderItem, as: "items" },
+        {
+          model: OrderItem,
+          as: "items",
+        },
       ],
       order: [["createdAt", "DESC"]],
       limit: pageSize,
@@ -1177,7 +1420,12 @@ router.get(
       distinct: true,
     });
 
-    res.json({ items: rows, total: count, page: p, pageSize });
+    res.json({
+      items: rows,
+      total: count,
+      page: p,
+      pageSize,
+    });
   }),
 );
 

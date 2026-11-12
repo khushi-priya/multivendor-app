@@ -20,7 +20,7 @@ const WORKFLOW_STATUSES = [
 ];
 
 const ORDER_STATUSES = [
-  'pending_payment',
+  'pending',
   'confirmed',
   'processing',
   'packed',
@@ -37,53 +37,103 @@ const ORDER_STATUSES = [
 const statusLabel = (status = 'unknown') =>
   status.replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
 
+const getItems = (response) => {
+  if (Array.isArray(response?.items)) return response.items;
+  if (Array.isArray(response?.orders)) return response.orders;
+  return [];
+};
+
 export default function ShopOrders() {
   const { user } = useAuth();
+
   const [orders, setOrders] = useState([]);
   const [employees, setEmployees] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+
   const [statusFilter, setStatusFilter] = useState('');
+
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [selectedStatus, setSelectedStatus] = useState('');
   const [workflowNotes, setWorkflowNotes] = useState('');
+
   const [selectedDeliveryUser, setSelectedDeliveryUser] = useState('');
   const [deliveryNotes, setDeliveryNotes] = useState('');
+
   const [loadingOrder, setLoadingOrder] = useState(false);
   const [updatingStatus, setUpdatingStatus] = useState(false);
   const [assigning, setAssigning] = useState(false);
+
   const [modalError, setModalError] = useState(null);
   const [modalSuccess, setModalSuccess] = useState(null);
+
   const [processingReturnId, setProcessingReturnId] = useState(null);
   const [rejectionReason, setRejectionReason] = useState('');
   const [refundReference, setRefundReference] = useState('');
+
   const can = (permission) =>
     user?.shop?.role === 'shop_owner' ||
     hasPermission(user?.permissions, permission);
-  const isDeliveryAssociate = user?.shop?.role === 'delivery_associate';
 
+  const isDeliveryAssociate =
+    user?.shop?.role === 'delivery_associate';
+
+  // Load orders and delivery associates independently.
+  // An associate API failure must not break the orders page.
   const loadData = async () => {
     setLoading(true);
     setError(null);
 
+    const query = statusFilter
+      ? `?status=${encodeURIComponent(statusFilter)}`
+      : '';
+
     try {
-      const query = statusFilter ? `?status=${statusFilter}` : '';
+      const orderResponse = await api.get(`/shop/orders${query}`);
+      setOrders(getItems(orderResponse));
 
-      const [orderRes, associateRes] = await Promise.all([
-        api.get(`/shop/orders${query}`),
-        can('orders.assign')
-          ? api.get('/shop/orders/delivery-associates')
-          : Promise.resolve({ items: [] }),
-      ]);
+      if (can('orders.assign') && !isDeliveryAssociate) {
+        try {
+          const associateResponse = await api.get(
+            '/shop/orders/delivery-associates',
+          );
 
-      setOrders(orderRes.items || []);
-      setEmployees(associateRes.items || []);
+          const associates = Array.isArray(associateResponse?.items)
+            ? associateResponse.items
+            : Array.isArray(associateResponse?.employees)
+              ? associateResponse.employees
+              : [];
 
-      if (associateRes.items?.length > 0 && !selectedDeliveryUser) {
-        setSelectedDeliveryUser(String(associateRes.items[0].userId));
+          setEmployees(associates);
+
+          if (associates.length > 0) {
+            setSelectedDeliveryUser((current) => {
+              const currentExists = associates.some(
+                (employee) =>
+                  String(employee.userId) === String(current),
+              );
+
+              return currentExists
+                ? current
+                : String(associates[0].userId);
+            });
+          } else {
+            setSelectedDeliveryUser('');
+          }
+        } catch (associateError) {
+          console.error(
+            'Failed to load delivery associates:',
+            associateError,
+          );
+          setEmployees([]);
+        }
+      } else {
+        setEmployees([]);
       }
     } catch (err) {
-      setError(err.message);
+      console.error('Failed to load shop orders:', err);
+      setOrders([]);
+      setError(err.message || 'Unable to load shop orders.');
     } finally {
       setLoading(false);
     }
@@ -94,13 +144,22 @@ export default function ShopOrders() {
   }, [statusFilter]);
 
   const refreshOrders = async () => {
-    const query = statusFilter ? `?status=${statusFilter}` : '';
-    const result = await api.get(`/shop/orders${query}`);
-    setOrders(result.items || []);
+    const query = statusFilter
+      ? `?status=${encodeURIComponent(statusFilter)}`
+      : '';
+
+    const response = await api.get(`/shop/orders${query}`);
+    setOrders(getItems(response));
+    setError(null);
   };
 
   const refreshSelectedOrder = async (orderId) => {
-    const { order } = await api.get(`/shop/orders/${orderId}`);
+    const response = await api.get(`/shop/orders/${orderId}`);
+    const order = response?.order || response;
+
+    if (!order?.id) {
+      throw new Error('Order details were not returned by the server.');
+    }
 
     setSelectedOrder(order);
     setSelectedStatus(order.status);
@@ -116,12 +175,14 @@ export default function ShopOrders() {
     setDeliveryNotes(order.delivery?.notes || '');
     setModalError(null);
     setModalSuccess(null);
+    setRejectionReason('');
+    setRefundReference('');
     setLoadingOrder(true);
 
     try {
       await refreshSelectedOrder(order.id);
     } catch (err) {
-      setModalError(err.message);
+      setModalError(err.message || 'Unable to load order details.');
     } finally {
       setLoadingOrder(false);
     }
@@ -135,7 +196,7 @@ export default function ShopOrders() {
     setModalSuccess(null);
 
     try {
-      const { order: updated } = await api.patch(
+      const response = await api.patch(
         `/shop/orders/${selectedOrder.id}/status`,
         {
           status: selectedStatus,
@@ -143,17 +204,31 @@ export default function ShopOrders() {
         },
       );
 
-      setSelectedOrder((current) => ({ ...current, ...updated }));
+      const updated = response?.order || response;
+
+      if (!updated?.id) {
+        throw new Error('Updated order was not returned by the server.');
+      }
+
+      setSelectedOrder((current) => ({
+        ...current,
+        ...updated,
+      }));
+
       setSelectedStatus(updated.status);
       setWorkflowNotes('');
 
       setOrders((current) => {
         if (statusFilter && statusFilter !== updated.status) {
-          return current.filter((order) => order.id !== updated.id);
+          return current.filter(
+            (order) => String(order.id) !== String(updated.id),
+          );
         }
 
         return current.map((order) =>
-          order.id === updated.id ? { ...order, ...updated } : order,
+          String(order.id) === String(updated.id)
+            ? { ...order, ...updated }
+            : order,
         );
       });
 
@@ -163,21 +238,23 @@ export default function ShopOrders() {
 
       try {
         await refreshSelectedOrder(updated.id);
-      } catch (err) {
+      } catch (refreshError) {
+        console.error(refreshError);
         setModalError(
-          `Status was saved, but order details could not be refreshed: ${err.message}`,
+          `Status was saved, but order details could not be refreshed: ${refreshError.message}`,
         );
       }
 
       try {
         await refreshOrders();
-      } catch (err) {
+      } catch (refreshError) {
+        console.error(refreshError);
         setModalError(
-          `Status was saved, but the order list could not be refreshed: ${err.message}`,
+          `Status was saved, but the order list could not be refreshed: ${refreshError.message}`,
         );
       }
     } catch (err) {
-      setModalError(err.message);
+      setModalError(err.message || 'Unable to update order status.');
       setSelectedStatus(selectedOrder.status);
     } finally {
       setUpdatingStatus(false);
@@ -206,35 +283,45 @@ export default function ShopOrders() {
 
       try {
         await refreshSelectedOrder(selectedOrder.id);
-      } catch (err) {
+      } catch (refreshError) {
+        console.error(refreshError);
         setModalError(
-          `Assignment was saved, but order details could not be refreshed: ${err.message}`,
+          `Assignment was saved, but order details could not be refreshed: ${refreshError.message}`,
         );
       }
 
       try {
         await refreshOrders();
-      } catch (err) {
+      } catch (refreshError) {
+        console.error(refreshError);
         setModalError(
-          `Assignment was saved, but the order list could not be refreshed: ${err.message}`,
+          `Assignment was saved, but the order list could not be refreshed: ${refreshError.message}`,
         );
       }
     } catch (err) {
-      setModalError(err.message);
+      setModalError(err.message || 'Unable to assign delivery associate.');
     } finally {
       setAssigning(false);
     }
   };
 
-  const handleReturnTransition = async (returnRequest, status, extra = {}) => {
+  const handleReturnTransition = async (
+    returnRequest,
+    status,
+    extra = {},
+  ) => {
     if (!selectedOrder || processingReturnId) return;
 
     const confirmations = {
       approved: 'Approve this return request?',
-      rejected: 'Reject this return request? The customer will see your reason.',
-      received: 'Confirm that the returned product has been physically received?',
-      refund_processing: 'Start the manual refund process? No payment will be sent automatically.',
-      refunded: 'Confirm that the refund was actually sent outside this system?',
+      rejected:
+        'Reject this return request? The customer will see your reason.',
+      received:
+        'Confirm that the returned product has been physically received?',
+      refund_processing:
+        'Start the manual refund process? No payment will be sent automatically.',
+      refunded:
+        'Confirm that the refund was actually sent outside this system?',
     };
 
     if (!window.confirm(confirmations[status])) return;
@@ -244,31 +331,44 @@ export default function ShopOrders() {
     setModalSuccess(null);
 
     try {
-      const { return: updatedReturn } = await api.patch(
+      const response = await api.patch(
         `/shop/returns/${returnRequest.id}`,
         { status, ...extra },
       );
 
+      const updatedReturn =
+        response?.return || response?.returnRequest;
+
+      if (!updatedReturn?.id) {
+        throw new Error('Updated return request was not returned.');
+      }
+
       setSelectedOrder((current) => ({
         ...current,
         returns: (current.returns || []).map((item) =>
-          item.id === updatedReturn.id ? updatedReturn : item,
+          String(item.id) === String(updatedReturn.id)
+            ? updatedReturn
+            : item,
         ),
       }));
 
-      setModalSuccess(`Return status updated to ${statusLabel(status)}.`);
+      setModalSuccess(
+        `Return status updated to ${statusLabel(status)}.`,
+      );
+
       setRejectionReason('');
       setRefundReference('');
 
       try {
         await refreshSelectedOrder(selectedOrder.id);
-      } catch (err) {
+      } catch (refreshError) {
+        console.error(refreshError);
         setModalError(
-          `Return was saved, but order details could not be refreshed: ${err.message}`,
+          `Return was saved, but order details could not be refreshed: ${refreshError.message}`,
         );
       }
     } catch (err) {
-      setModalError(err.message);
+      setModalError(err.message || 'Unable to update return request.');
     } finally {
       setProcessingReturnId(null);
     }
@@ -313,26 +413,41 @@ export default function ShopOrders() {
           </p>
         </div>
 
-        <select
-          value={statusFilter}
-          onChange={(event) => setStatusFilter(event.target.value)}
-          className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm"
-          aria-label="Filter orders by status"
-        >
-          <option value="">All Orders</option>
-          {WORKFLOW_STATUSES.map((status) => (
-            <option key={status} value={status}>
-              {statusLabel(status)}
-            </option>
-          ))}
-        </select>
+        <div className="flex items-center gap-2">
+          <select
+            value={statusFilter}
+            onChange={(event) => setStatusFilter(event.target.value)}
+            className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm"
+            aria-label="Filter orders by status"
+          >
+            <option value="">All Orders</option>
+            {WORKFLOW_STATUSES.map((status) => (
+              <option key={status} value={status}>
+                {statusLabel(status)}
+              </option>
+            ))}
+          </select>
+
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={loadData}
+            disabled={loading}
+          >
+            Refresh
+          </Button>
+        </div>
       </div>
 
-      {error && <Alert variant="error">{error}</Alert>}
+      {error && (
+        <Alert variant="error">
+          {error}
+        </Alert>
+      )}
 
       {loading ? (
         <Spinner />
-      ) : orders.length === 0 ? (
+      ) : error ? null : orders.length === 0 ? (
         <Card>
           <div className="py-8 text-center text-sm text-slate-500">
             No orders found for this shop.
@@ -357,25 +472,25 @@ export default function ShopOrders() {
               {orders.map((order) => (
                 <tr key={order.id} className="hover:bg-slate-50">
                   <td className="px-4 py-3 font-semibold text-indigo-600">
-                    {order.orderNumber}
+                    {order.orderNumber || `#${order.id}`}
                   </td>
 
                   <td className="px-4 py-3">
                     <div className="font-medium text-slate-900">
-                      {order.customer?.name}
+                      {order.customer?.name || 'Customer'}
                     </div>
                     <div className="text-xs text-slate-500">
-                      {order.customer?.phone}
+                      {order.customer?.phone || ''}
                     </div>
                   </td>
 
                   <td className="px-4 py-3 font-bold text-slate-900">
-                    ₹{Number(order.totalAmount).toFixed(2)}
+                    ₹{Number(order.totalAmount || 0).toFixed(2)}
                   </td>
 
                   <td className="px-4 py-3">
                     <span className="text-xs font-medium uppercase text-slate-600">
-                      {order.paymentMethod} &bull;{' '}
+                      {order.paymentMethod || '—'} &bull;{' '}
                       <strong
                         className={
                           order.paymentStatus === 'paid'
@@ -383,7 +498,7 @@ export default function ShopOrders() {
                             : 'text-amber-600'
                         }
                       >
-                        {order.paymentStatus}
+                        {order.paymentStatus || 'unknown'}
                       </strong>
                     </span>
                   </td>
@@ -409,7 +524,7 @@ export default function ShopOrders() {
                     )}
                   </td>
 
-                  <td className="space-x-2 px-4 py-3 text-right">
+                  <td className="px-4 py-3 text-right">
                     <button
                       type="button"
                       onClick={() => openOrder(order)}
@@ -425,18 +540,18 @@ export default function ShopOrders() {
         </div>
       )}
 
-      {/* Manage Order Modal */}
-      
       {selectedOrder && (
-        <div className="fixed inset-y-0 left-[260px] right-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 sm:p-5">
-          <div className="max-h-[94vh] w-full min-w-0 overflow-y-auto rounded-lg bg-white p-4 shadow-xl sm:p-6">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-3 sm:p-5">
+          <div className="max-h-[94vh] w-full max-w-5xl overflow-y-auto rounded-lg bg-white p-4 shadow-xl sm:p-6">
             <div className="flex items-center justify-between border-b pb-3">
               <div>
                 <h2 className="text-lg font-bold text-slate-900">
-                  Manage Order: {selectedOrder.orderNumber}
+                  Manage Order: {selectedOrder.orderNumber || selectedOrder.id}
                 </h2>
                 <div className="text-xs text-slate-500">
-                  {new Date(selectedOrder.createdAt).toLocaleString()}
+                  {selectedOrder.createdAt
+                    ? new Date(selectedOrder.createdAt).toLocaleString()
+                    : ''}
                 </div>
               </div>
 
@@ -475,13 +590,15 @@ export default function ShopOrders() {
                       Customer Details
                     </div>
                     <div className="font-semibold text-slate-900">
-                      {selectedOrder.customer?.name}
+                      {selectedOrder.customer?.name || 'Customer'}
                     </div>
+
                     {selectedOrder.customer?.email && (
                       <div className="text-xs text-slate-600">
                         {selectedOrder.customer.email}
                       </div>
                     )}
+
                     {selectedOrder.customer?.phone && (
                       <div className="text-xs text-slate-600">
                         {selectedOrder.customer.phone}
@@ -517,7 +634,7 @@ export default function ShopOrders() {
                             className="min-w-0 flex-1 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
                           >
                             <option value="" disabled>
-                              All Orders (filter only)
+                              Select status
                             </option>
                             {ORDER_STATUSES.map((status) => (
                               <option key={status} value={status}>
@@ -557,9 +674,7 @@ export default function ShopOrders() {
                         selectedOrder.shippingAddress.city,
                         selectedOrder.shippingAddress.state,
                         selectedOrder.shippingAddress.postalCode,
-                      ]
-                        .filter(Boolean)
-                        .join(', ')}
+                      ].filter(Boolean).join(', ')}
                     </div>
                     {selectedOrder.shippingAddress.phone && (
                       <div className="mt-1">
@@ -575,52 +690,64 @@ export default function ShopOrders() {
                   </h3>
 
                   <div className="divide-y divide-slate-100 rounded border border-slate-200 text-xs">
-                    {selectedOrder.items?.map((item) => (
-                      <div
-                        key={item.id}
-                        className="flex justify-between gap-3 p-2"
-                      >
-                        <div>
-                          <span className="font-semibold text-slate-900">
-                            {item.productName}
-                          </span>
-                          {item.variantName && ` (${item.variantName})`}
-                          <div className="text-slate-500">
-                            Qty: {item.quantity} &bull; Price: ₹
-                            {Number(item.unitPrice).toFixed(2)}
-                          </div>
-                          {item.taxSnapshot?.gstApplicable && (
+                    {selectedOrder.items?.length ? (
+                      selectedOrder.items.map((item) => (
+                        <div
+                          key={item.id}
+                          className="flex justify-between gap-3 p-2"
+                        >
+                          <div>
+                            <span className="font-semibold text-slate-900">
+                              {item.productName}
+                            </span>
+                            {item.variantName && ` (${item.variantName})`}
                             <div className="text-slate-500">
-                              GST {Number(item.taxSnapshot.gstRate).toFixed(2)}% · taxable ₹{Number(item.taxableValue || 0).toFixed(2)} · tax ₹{Number(item.taxAmount || 0).toFixed(2)}
+                              Qty: {item.quantity} &bull; Price: ₹
+                              {Number(item.unitPrice || 0).toFixed(2)}
                             </div>
-                          )}
-                        </div>
+                            {item.taxSnapshot?.gstApplicable && (
+                              <div className="text-slate-500">
+                                GST {Number(item.taxSnapshot.gstRate || 0).toFixed(2)}%
+                                · taxable ₹{Number(item.taxableValue || 0).toFixed(2)}
+                                · tax ₹{Number(item.taxAmount || 0).toFixed(2)}
+                              </div>
+                            )}
+                          </div>
 
-                        <div className="shrink-0 font-bold text-slate-900">
-                          ₹{Number(item.totalPrice).toFixed(2)}
+                          <div className="shrink-0 font-bold text-slate-900">
+                            ₹{Number(item.totalPrice || 0).toFixed(2)}
+                          </div>
                         </div>
+                      ))
+                    ) : (
+                      <div className="p-3 text-slate-500">
+                        No order items returned.
                       </div>
-                    ))}
+                    )}
                   </div>
 
                   <div className="mt-2 space-y-1 text-right text-xs text-slate-600">
                     {selectedOrder.subtotal != null && (
-                      <div>Taxable value: ₹{Number(selectedOrder.subtotal).toFixed(2)}</div>
+                      <div>
+                        Taxable value: ₹{Number(selectedOrder.subtotal).toFixed(2)}
+                      </div>
                     )}
                     {selectedOrder.taxAmount != null && (
-                      <div>GST: ₹{Number(selectedOrder.taxAmount).toFixed(2)}</div>
+                      <div>
+                        GST: ₹{Number(selectedOrder.taxAmount).toFixed(2)}
+                      </div>
                     )}
                     {selectedOrder.deliveryFee != null && (
                       <div>
                         Shipping
                         {selectedOrder.shippingSnapshot?.zoneName
-                          ? ` · ${selectedOrder.shippingSnapshot.zoneName}, ${Number(selectedOrder.shippingSnapshot.weightKg).toFixed(3)} kg`
+                          ? ` · ${selectedOrder.shippingSnapshot.zoneName}, ${Number(selectedOrder.shippingSnapshot.weightKg || 0).toFixed(3)} kg`
                           : ''}
                         : ₹{Number(selectedOrder.deliveryFee).toFixed(2)}
                       </div>
                     )}
                     <div className="font-bold text-slate-900">
-                      Total: ₹{Number(selectedOrder.totalAmount).toFixed(2)}
+                      Total: ₹{Number(selectedOrder.totalAmount || 0).toFixed(2)}
                     </div>
                   </div>
                 </section>
@@ -658,79 +785,81 @@ export default function ShopOrders() {
                     </p>
                   )}
 
-                  {can('orders.assign') && !isDeliveryAssociate &&
+                  {can('orders.assign') &&
+                    !isDeliveryAssociate &&
                     ['ready_for_dispatch', 'assigned_to_delivery'].includes(selectedOrder.status) && (
-                    employees.length > 0 ? (
-                      <form
-                        onSubmit={handleAssignDelivery}
-                        className="mt-3 grid gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end"
-                      >
-                        <div>
-                          <label
-                            htmlFor="delivery-associate"
-                            className="block text-xs font-medium text-slate-600"
-                          >
-                            Delivery associate
-                          </label>
-                          <select
-                            id="delivery-associate"
-                            required
-                            value={selectedDeliveryUser}
-                            onChange={(event) =>
-                              setSelectedDeliveryUser(event.target.value)
-                            }
-                            disabled={assigning || updatingStatus}
-                            className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
-                          >
-                            {employees.map((employee) => (
-                              <option
-                                key={employee.userId}
-                                value={employee.userId}
-                              >
-                                {employee.name} ({employee.phone || employee.email})
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-
-                        <div>
-                          <label
-                            htmlFor="delivery-notes"
-                            className="block text-xs font-medium text-slate-600"
-                          >
-                            Delivery notes
-                          </label>
-                          <Input
-                            id="delivery-notes"
-                            value={deliveryNotes}
-                            onChange={(event) =>
-                              setDeliveryNotes(event.target.value)
-                            }
-                            placeholder="Optional delivery instructions"
-                            maxLength={500}
-                          />
-                        </div>
-
-                        <Button
-                          type="submit"
-                          disabled={assigning || updatingStatus}
+                      employees.length > 0 ? (
+                        <form
+                          onSubmit={handleAssignDelivery}
+                          className="mt-3 grid gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end"
                         >
-                          {assigning
-                            ? 'Saving…'
-                            : selectedOrder.delivery
-                              ? 'Update Assignment'
-                              : 'Assign'}
-                        </Button>
-                      </form>
-                    ) : (
-                      <p className="mt-2 text-xs text-slate-500">
-                        No active delivery associates are available for this shop. Continue delivery status updates using the status control.
-                      </p>
-                    )
-                  )}
+                          <div>
+                            <label
+                              htmlFor="delivery-associate"
+                              className="block text-xs font-medium text-slate-600"
+                            >
+                              Delivery associate
+                            </label>
+                            <select
+                              id="delivery-associate"
+                              required
+                              value={selectedDeliveryUser}
+                              onChange={(event) =>
+                                setSelectedDeliveryUser(event.target.value)
+                              }
+                              disabled={assigning || updatingStatus}
+                              className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
+                            >
+                              {employees.map((employee) => (
+                                <option
+                                  key={employee.userId}
+                                  value={employee.userId}
+                                >
+                                  {employee.name} ({employee.phone || employee.email})
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div>
+                            <label
+                              htmlFor="delivery-notes"
+                              className="block text-xs font-medium text-slate-600"
+                            >
+                              Delivery notes
+                            </label>
+                            <Input
+                              id="delivery-notes"
+                              value={deliveryNotes}
+                              onChange={(event) =>
+                                setDeliveryNotes(event.target.value)
+                              }
+                              placeholder="Optional delivery instructions"
+                              maxLength={500}
+                            />
+                          </div>
+
+                          <Button
+                            type="submit"
+                            disabled={assigning || updatingStatus}
+                          >
+                            {assigning
+                              ? 'Saving…'
+                              : selectedOrder.delivery
+                                ? 'Update Assignment'
+                                : 'Assign'}
+                          </Button>
+                        </form>
+                      ) : (
+                        <p className="mt-2 text-xs text-slate-500">
+                          No active delivery associates are available for this shop.
+                          Continue delivery status updates using the status control.
+                        </p>
+                      )
+                    )}
                 </section>
 
-                {selectedOrder.returns?.map((returnRequest) => (
+                {(selectedOrder.returns || []).map((returnRequest) => (
                   <section
                     key={returnRequest.id}
                     className="rounded-lg border border-slate-200 p-3"
@@ -760,7 +889,9 @@ export default function ShopOrders() {
                       </p>
                       <p>
                         <span className="font-semibold">Requested:</span>{' '}
-                        {new Date(returnRequest.createdAt).toLocaleString()}
+                        {returnRequest.createdAt
+                          ? new Date(returnRequest.createdAt).toLocaleString()
+                          : '—'}
                       </p>
                       <p className="sm:col-span-2">
                         <span className="font-semibold">Reason:</span>{' '}
@@ -773,7 +904,7 @@ export default function ShopOrders() {
                     </div>
 
                     <div className="mt-3 divide-y divide-slate-100 rounded border border-slate-200">
-                      {returnRequest.items?.map((returnItem) => (
+                      {(returnRequest.items || []).map((returnItem) => (
                         <div
                           key={returnItem.id}
                           className="flex justify-between gap-3 p-2 text-xs"
@@ -793,8 +924,11 @@ export default function ShopOrders() {
 
                     <ol className="mt-3 space-y-1 text-xs text-slate-600">
                       <li>
-                        Return requested · {new Date(returnRequest.createdAt).toLocaleString()}
+                        Return requested · {returnRequest.createdAt
+                          ? new Date(returnRequest.createdAt).toLocaleString()
+                          : '—'}
                       </li>
+
                       {returnRequest.approvedAt && (
                         <li>
                           Approved · {new Date(returnRequest.approvedAt).toLocaleString()}
@@ -803,6 +937,7 @@ export default function ShopOrders() {
                             : ''}
                         </li>
                       )}
+
                       {returnRequest.rejectedAt && (
                         <li>
                           Rejected · {new Date(returnRequest.rejectedAt).toLocaleString()}
@@ -811,11 +946,13 @@ export default function ShopOrders() {
                             : ''}
                         </li>
                       )}
+
                       {returnRequest.rejectionReason && (
                         <li className="rounded bg-rose-50 p-2 text-rose-800">
                           Rejection reason: {returnRequest.rejectionReason}
                         </li>
                       )}
+
                       {returnRequest.receivedAt && (
                         <li>
                           Product received · {new Date(returnRequest.receivedAt).toLocaleString()}
@@ -824,11 +961,13 @@ export default function ShopOrders() {
                             : ''}
                         </li>
                       )}
+
                       {returnRequest.refundProcessingAt && (
                         <li>
                           Manual refund processing · {new Date(returnRequest.refundProcessingAt).toLocaleString()}
                         </li>
                       )}
+
                       {returnRequest.refundedAt && (
                         <li>
                           Refund confirmed · {new Date(returnRequest.refundedAt).toLocaleString()}
@@ -837,6 +976,7 @@ export default function ShopOrders() {
                             : ''}
                         </li>
                       )}
+
                       {returnRequest.refundReference && (
                         <li>
                           Manual refund reference: {returnRequest.refundReference}
@@ -901,7 +1041,8 @@ export default function ShopOrders() {
                     {can('orders.approve') && returnRequest.status === 'approved' && (
                       <div className="mt-4">
                         <p className="text-xs text-slate-500">
-                          Confirm receipt after the returned product physically arrives. Returned stock is not automatically restocked; inspect it first.
+                          Confirm receipt after the returned product physically arrives.
+                          Returned stock is not automatically restocked; inspect it first.
                         </p>
                         <Button
                           type="button"
@@ -928,10 +1069,7 @@ export default function ShopOrders() {
                           className="mt-2"
                           disabled={processingReturnId === returnRequest.id}
                           onClick={() =>
-                            handleReturnTransition(
-                              returnRequest,
-                              'refund_processing',
-                            )
+                            handleReturnTransition(returnRequest, 'refund_processing')
                           }
                         >
                           {processingReturnId === returnRequest.id
@@ -1001,7 +1139,9 @@ export default function ShopOrders() {
                       const event = history.find(
                         (entry) => entry.newStatus === status,
                       );
+
                       const current = selectedOrder.status === status;
+
                       const reached =
                         current ||
                         Boolean(event) ||

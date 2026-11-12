@@ -1,6 +1,5 @@
 
 
-
 // import React, { useState, useEffect, useCallback, useMemo } from 'react';
 // import { Link } from 'react-router-dom';
 // import { api } from '../../services/api.js';
@@ -215,6 +214,7 @@
 
 //   const handleSubmitReview = async (e) => {
 //     e.preventDefault();
+
 //     if (!reviewingItem || reviewLoading) return;
 
 //     const { order, item } = reviewingItem;
@@ -253,13 +253,17 @@
 //     setReviewLoading(true);
 //     setReviewError('');
 
-//     try {
-//       const payload = {
-//         rating: Number(reviewRating),
-//         title: reviewTitle.trim() || null,
-//         body: reviewBody.trim(),
-//       };
-
+//     // try {
+//     //   const payload = {
+//     //     rating: Number(reviewRating),
+//     //     title: reviewTitle.trim() || null,
+//     //     body: reviewBody.trim(),
+//     //   };
+//     const payload = {
+//   rating: Number(reviewRating),
+//   title: reviewTitle.trim(),
+//   body: reviewBody.trim(),
+// };
 //       const isEditing = Boolean(review?.id);
 
 //       if (isEditing) {
@@ -290,9 +294,17 @@
 //     }
 //   };
 
+//   // Close cancellation popup without cancelling the order.
+//   const closeCancelModal = () => {
+//     if (actionLoading) return;
+
+//     setCancellingOrder(null);
+//     setCancelReason('');
+//   };
+
 //   const handleCancelOrder = async (e) => {
 //     e.preventDefault();
-//     if (!cancellingOrder) return;
+//     if (!cancellingOrder || actionLoading) return;
 
 //     setActionLoading(true);
 
@@ -327,9 +339,17 @@
 //     setReturnReason('');
 //   };
 
+//   const closeReturnModal = () => {
+//     if (actionLoading) return;
+
+//     setReturningOrder(null);
+//     setReturnReason('');
+//     setReturnItemsState({});
+//   };
+
 //   const handleReturnOrder = async (e) => {
 //     e.preventDefault();
-//     if (!returningOrder) return;
+//     if (!returningOrder || actionLoading) return;
 
 //     const itemsToReturn = Object.entries(returnItemsState)
 //       .filter(([, value]) => value.selected && Number(value.quantity) > 0)
@@ -353,6 +373,7 @@
 
 //       setReturningOrder(null);
 //       setReturnReason('');
+//       setReturnItemsState({});
 //       await fetchOrders();
 //     } catch (err) {
 //       setError(err.message || 'Failed to submit return request');
@@ -725,7 +746,10 @@
 //                     {canCancel && (
 //                       <Button
 //                         variant="secondary"
-//                         onClick={() => setCancellingOrder(order)}
+//                         onClick={() => {
+//                           setCancellingOrder(order);
+//                           setCancelReason('');
+//                         }}
 //                         className="border border-[#E8CFC5] py-2 text-xs text-[#A55740] hover:bg-[#F8EAE4]"
 //                       >
 //                         Cancel Order
@@ -751,13 +775,39 @@
 
 //       {/* Review modal */}
 //       {reviewingItem && (
-//         <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#34483A]/60 p-4 backdrop-blur-sm">
-//           <div className={modalClass}>
-//             <h3 className="text-lg font-bold text-[#34483A]">
-//               {getReview(reviewingItem.item)?.id
-//                 ? 'Edit Product Review'
-//                 : 'Write a Product Review'}
-//             </h3>
+//         <div
+//           className="fixed inset-0 z-50 flex items-center justify-center bg-[#34483A]/60 p-4 backdrop-blur-sm"
+//           onMouseDown={(e) => {
+//             if (e.target === e.currentTarget) closeReviewModal();
+//           }}
+//         >
+//           <div
+//             className={modalClass}
+//             role="dialog"
+//             aria-modal="true"
+//             aria-labelledby="review-modal-title"
+//           >
+//             <div className="mb-1 flex items-start justify-between gap-4">
+//               <h3
+//                 id="review-modal-title"
+//                 className="text-lg font-bold text-[#34483A]"
+//               >
+//                 {getReview(reviewingItem.item)?.id
+//                   ? 'Edit Product Review'
+//                   : 'Write a Product Review'}
+//               </h3>
+
+//               <button
+//                 type="button"
+//                 onClick={closeReviewModal}
+//                 disabled={reviewLoading}
+//                 aria-label="Close review form"
+//                 title="Close"
+//                 className="-mr-2 -mt-2 flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-2xl leading-none text-[#77786D] transition hover:bg-[#E9EDE4] hover:text-[#34483A] disabled:cursor-not-allowed disabled:opacity-50"
+//               >
+//                 ×
+//               </button>
+//             </div>
 
 //             <p className="mb-5 mt-1 text-sm text-[#77786D]">
 //               {getProductName(reviewingItem.item)}
@@ -784,7 +834,9 @@
 //                       aria-label={`Rate ${star} out of 5 stars`}
 //                       aria-pressed={star === reviewRating}
 //                       className={`text-3xl transition hover:scale-110 ${
-//                         star <= reviewRating ? 'text-[#C7795D]' : 'text-[#D8D5C9]'
+//                         star <= reviewRating
+//                           ? 'text-[#C7795D]'
+//                           : 'text-[#D8D5C9]'
 //                       }`}
 //                     >
 //                       ★
@@ -858,40 +910,66 @@
 
 //       {/* Cancel modal */}
 //       {cancellingOrder && (
-//         <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#34483A]/60 p-4 backdrop-blur-sm">
-//           <div className="w-full max-w-md rounded-2xl border border-[#E8E4DA] bg-[#FDFCF8] p-6 shadow-2xl">
-//             <h3 className="text-lg font-bold text-[#34483A]">
-//               Cancel Order
-//             </h3>
+//         <div
+//           className="fixed inset-0 z-50 flex items-center justify-center bg-[#34483A]/60 p-4 backdrop-blur-sm"
+//           onMouseDown={(e) => {
+//             if (e.target === e.currentTarget) closeCancelModal();
+//           }}
+//         >
+//           <div
+//             className={modalClass}
+//             role="dialog"
+//             aria-modal="true"
+//             aria-labelledby="cancel-modal-title"
+//           >
+//             {/* Heading with cross close button */}
+//             <div className="mb-1 flex items-start justify-between gap-4">
+//               <h3
+//                 id="cancel-modal-title"
+//                 className="text-lg font-bold text-[#34483A]"
+//               >
+//                 Cancel Order
+//               </h3>
+
+//               <button
+//                 type="button"
+//                 onClick={closeCancelModal}
+//                 disabled={actionLoading}
+//                 aria-label="Close cancellation dialog"
+//                 title="Close"
+//                 className="-mr-2 -mt-2 flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-2xl leading-none text-[#77786D] transition hover:bg-[#E9EDE4] hover:text-[#34483A] disabled:cursor-not-allowed disabled:opacity-50"
+//               >
+//                 ×
+//               </button>
+//             </div>
 
 //             <p className="mb-4 mt-2 text-sm text-[#77786D]">
 //               Are you sure you want to cancel order{' '}
 //               <b>#{getOrderNumber(cancellingOrder)}</b>?
 //             </p>
 
-//             <form onSubmit={handleCancelOrder}>
-//               <label className="mb-2 block text-sm font-medium text-[#34483A]">
-//                 Cancellation Reason
-//               </label>
+//             <form onSubmit={handleCancelOrder} className="space-y-4">
+//               <div>
+//                 <label className="mb-2 block text-sm font-medium text-[#34483A]">
+//                   Cancellation Reason
+//                 </label>
 
-//               <textarea
-//                 required
-//                 rows={3}
-//                 value={cancelReason}
-//                 onChange={(e) => setCancelReason(e.target.value)}
-//                 placeholder="Reason for cancellation..."
-//                 className={inputClass}
-//               />
+//                 <textarea
+//                   required
+//                   rows={3}
+//                   value={cancelReason}
+//                   onChange={(e) => setCancelReason(e.target.value)}
+//                   placeholder="Reason for cancellation..."
+//                   className={inputClass}
+//                 />
+//               </div>
 
 //               <div className="mt-5 flex justify-end gap-2">
 //                 <Button
 //                   type="button"
 //                   variant="secondary"
 //                   disabled={actionLoading}
-//                   onClick={() => {
-//                     setCancellingOrder(null);
-//                     setCancelReason('');
-//                   }}
+//                   onClick={closeCancelModal}
 //                   className="py-2 text-xs"
 //                 >
 //                   Keep Order
@@ -912,11 +990,37 @@
 
 //       {/* Return modal */}
 //       {returningOrder && (
-//         <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#34483A]/60 p-4 backdrop-blur-sm">
-//           <div className={modalClass}>
-//             <h3 className="text-lg font-bold text-[#34483A]">
-//               Request Return / Refund
-//             </h3>
+//         <div
+//           className="fixed inset-0 z-50 flex items-center justify-center bg-[#34483A]/60 p-4 backdrop-blur-sm"
+//           onMouseDown={(e) => {
+//             if (e.target === e.currentTarget) closeReturnModal();
+//           }}
+//         >
+//           <div
+//             className={modalClass}
+//             role="dialog"
+//             aria-modal="true"
+//             aria-labelledby="return-modal-title"
+//           >
+//             <div className="mb-1 flex items-start justify-between gap-4">
+//               <h3
+//                 id="return-modal-title"
+//                 className="text-lg font-bold text-[#34483A]"
+//               >
+//                 Request Return / Refund
+//               </h3>
+
+//               <button
+//                 type="button"
+//                 disabled={actionLoading}
+//                 onClick={closeReturnModal}
+//                 aria-label="Close return form"
+//                 title="Close"
+//                 className="-mr-2 -mt-2 flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-2xl leading-none text-[#77786D] transition hover:bg-[#E9EDE4] hover:text-[#34483A] disabled:cursor-not-allowed disabled:opacity-50"
+//               >
+//                 ×
+//               </button>
+//             </div>
 
 //             <p className="mb-4 mt-1 text-sm text-[#77786D]">
 //               Order #{getOrderNumber(returningOrder)}
@@ -970,7 +1074,10 @@
 //                                 ...current[item.id],
 //                                 quantity: Math.min(
 //                                   Number(item.quantity),
-//                                   Math.max(1, parseInt(e.target.value, 10) || 1)
+//                                   Math.max(
+//                                     1,
+//                                     parseInt(e.target.value, 10) || 1
+//                                   )
 //                                 ),
 //                               },
 //                             }))
@@ -1003,10 +1110,7 @@
 //                   type="button"
 //                   variant="secondary"
 //                   disabled={actionLoading}
-//                   onClick={() => {
-//                     setReturningOrder(null);
-//                     setReturnReason('');
-//                   }}
+//                   onClick={closeReturnModal}
 //                   className="py-2 text-xs"
 //                 >
 //                   Cancel
@@ -1154,7 +1258,6 @@ export default function CustomerOrders() {
   const [returnItemsState, setReturnItemsState] = useState({});
   const [actionLoading, setActionLoading] = useState(false);
 
-  // Product review
   const [reviewingItem, setReviewingItem] = useState(null);
   const [reviewRating, setReviewRating] = useState(5);
   const [reviewTitle, setReviewTitle] = useState('');
@@ -1242,6 +1345,7 @@ export default function CustomerOrders() {
     setReviewError('');
   };
 
+  // Submit or update a product review.
   const handleSubmitReview = async (e) => {
     e.preventDefault();
 
@@ -1286,7 +1390,7 @@ export default function CustomerOrders() {
     try {
       const payload = {
         rating: Number(reviewRating),
-        title: reviewTitle.trim() || null,
+        title: reviewTitle.trim(),
         body: reviewBody.trim(),
       };
 
@@ -1320,9 +1424,17 @@ export default function CustomerOrders() {
     }
   };
 
+  // Close cancellation popup without cancelling the order.
+  const closeCancelModal = () => {
+    if (actionLoading) return;
+
+    setCancellingOrder(null);
+    setCancelReason('');
+  };
+
   const handleCancelOrder = async (e) => {
     e.preventDefault();
-    if (!cancellingOrder) return;
+    if (!cancellingOrder || actionLoading) return;
 
     setActionLoading(true);
 
@@ -1357,9 +1469,17 @@ export default function CustomerOrders() {
     setReturnReason('');
   };
 
+  const closeReturnModal = () => {
+    if (actionLoading) return;
+
+    setReturningOrder(null);
+    setReturnReason('');
+    setReturnItemsState({});
+  };
+
   const handleReturnOrder = async (e) => {
     e.preventDefault();
-    if (!returningOrder) return;
+    if (!returningOrder || actionLoading) return;
 
     const itemsToReturn = Object.entries(returnItemsState)
       .filter(([, value]) => value.selected && Number(value.quantity) > 0)
@@ -1383,6 +1503,7 @@ export default function CustomerOrders() {
 
       setReturningOrder(null);
       setReturnReason('');
+      setReturnItemsState({});
       await fetchOrders();
     } catch (err) {
       setError(err.message || 'Failed to submit return request');
@@ -1755,7 +1876,10 @@ export default function CustomerOrders() {
                     {canCancel && (
                       <Button
                         variant="secondary"
-                        onClick={() => setCancellingOrder(order)}
+                        onClick={() => {
+                          setCancellingOrder(order);
+                          setCancelReason('');
+                        }}
                         className="border border-[#E8CFC5] py-2 text-xs text-[#A55740] hover:bg-[#F8EAE4]"
                       >
                         Cancel Order
@@ -1793,7 +1917,6 @@ export default function CustomerOrders() {
             aria-modal="true"
             aria-labelledby="review-modal-title"
           >
-            {/* Modal heading and close button */}
             <div className="mb-1 flex items-start justify-between gap-4">
               <h3
                 id="review-modal-title"
@@ -1917,40 +2040,66 @@ export default function CustomerOrders() {
 
       {/* Cancel modal */}
       {cancellingOrder && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#34483A]/60 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-2xl border border-[#E8E4DA] bg-[#FDFCF8] p-6 shadow-2xl">
-            <h3 className="text-lg font-bold text-[#34483A]">
-              Cancel Order
-            </h3>
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-[#34483A]/60 p-4 backdrop-blur-sm"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) closeCancelModal();
+          }}
+        >
+          <div
+            className={modalClass}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="cancel-modal-title"
+          >
+            {/* Heading with cross close button */}
+            <div className="mb-1 flex items-start justify-between gap-4">
+              <h3
+                id="cancel-modal-title"
+                className="text-lg font-bold text-[#34483A]"
+              >
+                Cancel Order
+              </h3>
+
+              <button
+                type="button"
+                onClick={closeCancelModal}
+                disabled={actionLoading}
+                aria-label="Close cancellation dialog"
+                title="Close"
+                className="-mr-2 -mt-2 flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-2xl leading-none text-[#77786D] transition hover:bg-[#E9EDE4] hover:text-[#34483A] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                ×
+              </button>
+            </div>
 
             <p className="mb-4 mt-2 text-sm text-[#77786D]">
               Are you sure you want to cancel order{' '}
               <b>#{getOrderNumber(cancellingOrder)}</b>?
             </p>
 
-            <form onSubmit={handleCancelOrder}>
-              <label className="mb-2 block text-sm font-medium text-[#34483A]">
-                Cancellation Reason
-              </label>
+            <form onSubmit={handleCancelOrder} className="space-y-4">
+              <div>
+                <label className="mb-2 block text-sm font-medium text-[#34483A]">
+                  Cancellation Reason
+                </label>
 
-              <textarea
-                required
-                rows={3}
-                value={cancelReason}
-                onChange={(e) => setCancelReason(e.target.value)}
-                placeholder="Reason for cancellation..."
-                className={inputClass}
-              />
+                <textarea
+                  required
+                  rows={3}
+                  value={cancelReason}
+                  onChange={(e) => setCancelReason(e.target.value)}
+                  placeholder="Reason for cancellation..."
+                  className={inputClass}
+                />
+              </div>
 
               <div className="mt-5 flex justify-end gap-2">
                 <Button
                   type="button"
                   variant="secondary"
                   disabled={actionLoading}
-                  onClick={() => {
-                    setCancellingOrder(null);
-                    setCancelReason('');
-                  }}
+                  onClick={closeCancelModal}
                   className="py-2 text-xs"
                 >
                   Keep Order
@@ -1971,11 +2120,37 @@ export default function CustomerOrders() {
 
       {/* Return modal */}
       {returningOrder && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#34483A]/60 p-4 backdrop-blur-sm">
-          <div className={modalClass}>
-            <h3 className="text-lg font-bold text-[#34483A]">
-              Request Return / Refund
-            </h3>
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-[#34483A]/60 p-4 backdrop-blur-sm"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) closeReturnModal();
+          }}
+        >
+          <div
+            className={modalClass}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="return-modal-title"
+          >
+            <div className="mb-1 flex items-start justify-between gap-4">
+              <h3
+                id="return-modal-title"
+                className="text-lg font-bold text-[#34483A]"
+              >
+                Request Return / Refund
+              </h3>
+
+              <button
+                type="button"
+                disabled={actionLoading}
+                onClick={closeReturnModal}
+                aria-label="Close return form"
+                title="Close"
+                className="-mr-2 -mt-2 flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-2xl leading-none text-[#77786D] transition hover:bg-[#E9EDE4] hover:text-[#34483A] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                ×
+              </button>
+            </div>
 
             <p className="mb-4 mt-1 text-sm text-[#77786D]">
               Order #{getOrderNumber(returningOrder)}
@@ -2065,10 +2240,7 @@ export default function CustomerOrders() {
                   type="button"
                   variant="secondary"
                   disabled={actionLoading}
-                  onClick={() => {
-                    setReturningOrder(null);
-                    setReturnReason('');
-                  }}
+                  onClick={closeReturnModal}
                   className="py-2 text-xs"
                 >
                   Cancel

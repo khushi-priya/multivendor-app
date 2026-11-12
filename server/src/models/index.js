@@ -328,30 +328,99 @@ const AttributeValue = sequelize.define(
   T("attribute_values"),
 );
 
+// const Product = sequelize.define(
+//   "Product",
+//   {
+//     name: { type: DataTypes.STRING(200), allowNull: false },
+//     sku: DataTypes.STRING(80),
+//     categoryId: DataTypes.INTEGER.UNSIGNED,
+//     subcategoryId: DataTypes.INTEGER.UNSIGNED,
+//     brandId: DataTypes.INTEGER.UNSIGNED,
+//     description: DataTypes.TEXT,
+//     basePrice: {
+//       type: DataTypes.DECIMAL(10, 2),
+//       allowNull: false,
+//       defaultValue: 0.0,
+//     },
+//     weight: { type: DataTypes.DECIMAL(10, 3), allowNull: true },
+//     weightUnit: {
+//       type: DataTypes.ENUM("g", "kg"),
+//       allowNull: false,
+//       defaultValue: "kg",
+//     },
+//     isActive: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
+//   },
+//   T("products"),
+// );
+
 const Product = sequelize.define(
   "Product",
   {
-    name: { type: DataTypes.STRING(200), allowNull: false },
-    sku: DataTypes.STRING(80),
-    categoryId: DataTypes.INTEGER.UNSIGNED,
-    subcategoryId: DataTypes.INTEGER.UNSIGNED,
-    brandId: DataTypes.INTEGER.UNSIGNED,
-    description: DataTypes.TEXT,
+    name: {
+      type: DataTypes.STRING(200),
+      allowNull: false,
+    },
+
+    sku: {
+      type: DataTypes.STRING(80),
+      allowNull: true,
+    },
+
+    categoryId: {
+      type: DataTypes.INTEGER.UNSIGNED,
+      allowNull: true,
+    },
+
+    subcategoryId: {
+      type: DataTypes.INTEGER.UNSIGNED,
+      allowNull: true,
+    },
+
+    brandId: {
+      type: DataTypes.INTEGER.UNSIGNED,
+      allowNull: true,
+    },
+
+    // Short description shown on customer product cards
+    shortDescription: {
+      type: DataTypes.STRING(500),
+      allowNull: true,
+      defaultValue: null,
+    },
+
+    // Full product description shown on product detail page
+    description: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+    },
+
     basePrice: {
       type: DataTypes.DECIMAL(10, 2),
       allowNull: false,
       defaultValue: 0.0,
     },
-    weight: { type: DataTypes.DECIMAL(10, 3), allowNull: true },
+
+    weight: {
+      type: DataTypes.DECIMAL(10, 3),
+      allowNull: true,
+    },
+
     weightUnit: {
       type: DataTypes.ENUM("g", "kg"),
       allowNull: false,
       defaultValue: "kg",
     },
-    isActive: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
+
+    isActive: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: true,
+    },
   },
   T("products"),
 );
+
+
 
 const ProductVariant = sequelize.define(
   "ProductVariant",
@@ -839,6 +908,7 @@ const CartItem = sequelize.define(
     cartId: { type: DataTypes.INTEGER.UNSIGNED, allowNull: false },
     productId: { type: DataTypes.INTEGER.UNSIGNED, allowNull: false },
     productVariantId: { type: DataTypes.INTEGER.UNSIGNED, allowNull: false },
+    sellerListingId: { type: DataTypes.INTEGER.UNSIGNED, allowNull: true },
     quantity: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 1 },
     unitPrice: { type: DataTypes.DECIMAL(10, 2), allowNull: false },
   },
@@ -1006,6 +1076,7 @@ const OrderItem = sequelize.define(
     orderId: { type: DataTypes.INTEGER.UNSIGNED, allowNull: false },
     productId: { type: DataTypes.INTEGER.UNSIGNED, allowNull: false },
     productVariantId: { type: DataTypes.INTEGER.UNSIGNED, allowNull: false },
+    sellerListingId: { type: DataTypes.INTEGER.UNSIGNED, allowNull: true },
     productName: { type: DataTypes.STRING(200), allowNull: false },
     variantName: { type: DataTypes.STRING(150), allowNull: false },
     sku: DataTypes.STRING(80),
@@ -1369,6 +1440,14 @@ ProductVariant.hasMany(SellerListing, {
   as: "sellerListings",
   foreignKey: "productVariantId",
 });
+Product.hasMany(SellerListing, {
+  as: "sellerListings",
+  foreignKey: "productId",
+});
+Shop.hasMany(SellerListing, {
+  as: "sellerListings",
+  foreignKey: "shopId",
+});
 
 Inventory.belongsTo(Shop, { as: "shop", foreignKey: "shopId" });
 Inventory.belongsTo(Product, { as: "product", foreignKey: "productId" });
@@ -1380,6 +1459,7 @@ ProductVariant.hasMany(Inventory, {
   as: "inventoryRows",
   foreignKey: "productVariantId",
 });
+Shop.hasMany(Inventory, { as: "inventoryRows", foreignKey: "shopId" });
 
 InventoryMovement.belongsTo(Shop, { as: "shop", foreignKey: "shopId" });
 InventoryMovement.belongsTo(Product, {
@@ -1502,6 +1582,10 @@ CartItem.belongsTo(ProductVariant, {
   as: "variant",
   foreignKey: "productVariantId",
 });
+CartItem.belongsTo(SellerListing, {
+  as: "sellerListing",
+  foreignKey: "sellerListingId",
+});
 Wishlist.belongsTo(User, { as: "user", foreignKey: "userId" });
 Wishlist.belongsTo(Product, { as: "product", foreignKey: "productId" });
 
@@ -1549,6 +1633,10 @@ OrderItem.belongsTo(Product, { as: "product", foreignKey: "productId" });
 OrderItem.belongsTo(ProductVariant, {
   as: "variant",
   foreignKey: "productVariantId",
+});
+OrderItem.belongsTo(SellerListing, {
+  as: "sellerListing",
+  foreignKey: "sellerListingId",
 });
 
 OrderStatusHistory.belongsTo(Order, { as: "order", foreignKey: "orderId" });

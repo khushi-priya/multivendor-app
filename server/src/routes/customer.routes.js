@@ -224,22 +224,31 @@ router.get(
         const variantIds = json.items.map((it) => it.productVariantId);
 
         const [listings, stocks] = await Promise.all([
-          SellerListing.findAll({ where: { shopId: c.shopId, productVariantId: variantIds } }),
+          SellerListing.findAll({
+            where: { shopId: c.shopId, productVariantId: variantIds, isActive: true },
+          }),
           Inventory.findAll({ where: { shopId: c.shopId, productVariantId: variantIds } }),
         ]);
 
-        const listingMap = Object.fromEntries(listings.map((l) => [l.productVariantId, Number(l.retailPrice)]));
+        const listingById = new Map(listings.map((listing) => [Number(listing.id), listing]));
+        const listingByVariant = new Map(listings.map((listing) => [Number(listing.productVariantId), listing]));
         const stockMap = Object.fromEntries(stocks.map((s) => [s.productVariantId, s.quantity]));
 
         json.items = json.items.map((it) => {
-          const currentPrice = listingMap[it.productVariantId] ?? Number(it.unitPrice);
+          const listing = listingById.get(Number(it.sellerListingId))
+            || listingByVariant.get(Number(it.productVariantId));
+          const currentPrice = listing ? Number(listing.retailPrice) : Number(it.unitPrice);
           const currentStock = stockMap[it.productVariantId] ?? 0;
           return {
             ...it,
+            sellerListingId: listing?.id ?? null,
+            gstApplicable: listing?.gstApplicable ?? false,
+            gstRate: Number(listing?.gstRate || 0),
+            priceIncludesGst: listing?.priceIncludesGst ?? false,
             currentPrice,
             currentStock,
             lineTotal: Number((it.quantity * currentPrice).toFixed(2)),
-            isAvailable: currentStock >= it.quantity,
+            isAvailable: Boolean(listing) && currentStock >= it.quantity,
           };
         });
 
@@ -253,60 +262,114 @@ router.get(
 );
 
 const addToCartSchema = z.object({
-  shopId: z.coerce.number().int().positive(),
+  shopId: z.coerce.number().int().positive().optional(),
+  sellerListingId: z.coerce.number().int().positive().optional(),
   productId: z.coerce.number().int().positive(),
   productVariantId: z.coerce.number().int().positive(),
   quantity: z.coerce.number().int().min(1).default(1),
+}).refine((body) => body.sellerListingId || body.shopId, {
+  path: ['sellerListingId'],
+  message: 'Select a seller listing before adding this product to the cart.',
 });
 
 router.post(
   '/cart',
   validate(addToCartSchema),
   wrap(async (req, res) => {
-    const { shopId, productId, productVariantId, quantity } = req.valid;
-
-    // Validate shop is active
-    const shop = await Shop.findOne({ where: { id: shopId, status: 'active' } });
-    if (!shop) throw new AppError(404, 'Shop not found or not currently active');
-
-    // Validate listing & price
-    const listing = await SellerListing.findOne({
-      where: { shopId, productVariantId, isActive: true },
-      include: [{ model: ProductVariant, as: 'variant', attributes: ['id', 'productId', 'isActive'] }],
-    });
-    if (!listing) throw new AppError(404, 'Product variant is not available from this shop');
-    if (!listing.variant?.isActive || Number(listing.productId) !== productId || Number(listing.variant.productId) !== productId) {
-      throw new AppError(400, 'Selected product does not match the available variant. Refresh and try again.');
-    }
-
-    // Check stock
-    const inv = await Inventory.findOne({ where: { shopId, productVariantId } });
-    const availableStock = inv ? inv.quantity : 0;
-    if (availableStock < quantity) {
-      throw new AppError(400, `Only ${availableStock} units available in stock`);
-    }
-
-    const [cart] = await Cart.findOrCreate({
-      where: { userId: req.user.id, shopId },
-    });
-
-    const [item, created] = await CartItem.findOrCreate({
-      where: { cartId: cart.id, productVariantId },
-      defaults: {
-        productId,
-        quantity,
-        unitPrice: listing.retailPrice,
-      },
-    });
-
-    if (!created) {
-      const newQty = item.quantity + quantity;
-      if (availableStock < newQty) {
-        throw new AppError(400, `Cannot add more. Only ${availableStock} units in stock (${item.quantity} already in cart).`);
+    const { shopId: requestedShopId, sellerListingId, productId, productVariantId, quantity } = req.valid;
+    const item = await sequelize.transaction(async (transaction) => {
+      await User.findByPk(req.user.id, {
+        transaction,
+        lock: transaction.LOCK.UPDATE,
+      });
+      const listing = await SellerListing.findOne({
+        where: sellerListingId
+          ? { id: sellerListingId, isActive: true }
+          : { shopId: requestedShopId, productVariantId, isActive: true },
+        include: [{
+          model: ProductVariant,
+          as: 'variant',
+          attributes: ['id', 'productId', 'isActive'],
+          include: [{ model: Product, as: 'product', attributes: ['id', 'isActive'] }],
+        }],
+        transaction,
+        lock: transaction.LOCK.UPDATE,
+      });
+      if (!listing) throw new AppError(404, 'This seller listing is no longer available.');
+      const shopId = Number(listing.shopId);
+      if (requestedShopId && Number(requestedShopId) !== shopId) {
+        throw new AppError(400, 'The selected seller does not match this listing. Refresh and try again.');
       }
-      await item.update({ quantity: newQty, unitPrice: listing.retailPrice });
-    }
+      if (!listing.variant?.isActive || !listing.variant.product?.isActive ||
+          Number(listing.productId) !== productId ||
+          Number(listing.variant.productId) !== productId) {
+        throw new AppError(400, 'Selected product does not match the available variant. Refresh and try again.');
+      }
+      if (Number(listing.productVariantId) !== productVariantId) {
+        throw new AppError(400, 'Selected variant does not match this seller listing. Refresh and try again.');
+      }
 
+      const shop = await Shop.findOne({
+        where: { id: shopId, status: 'active' },
+        transaction,
+      });
+      if (!shop) throw new AppError(404, 'Shop not found or not currently active');
+
+      const otherCarts = await Cart.findAll({
+        where: { userId: req.user.id, shopId: { [Op.ne]: shopId } },
+        attributes: ['id', 'shopId'],
+        transaction,
+      });
+      if (otherCarts.length) {
+        const otherCartIds = otherCarts.map((cart) => cart.id);
+        const existingOtherItem = await CartItem.findOne({
+          where: { cartId: otherCartIds },
+          transaction,
+        });
+        if (existingOtherItem) {
+          const otherCart = otherCarts.find((cart) => Number(cart.id) === Number(existingOtherItem.cartId));
+          const otherShop = otherCart ? await Shop.findByPk(otherCart.shopId, { transaction }) : null;
+          const shopName = otherShop?.name || 'another shop';
+          throw new AppError(409, `Your cart already contains items from ${shopName}. Complete that shop's checkout or clear your cart before choosing a different seller.`);
+        }
+      }
+
+      const inv = await Inventory.findOne({
+        where: { shopId, productVariantId },
+        transaction,
+        lock: transaction.LOCK.UPDATE,
+      });
+      const availableStock = inv ? inv.quantity : 0;
+      if (availableStock < quantity) {
+        throw new AppError(400, `Only ${availableStock} units available in stock`);
+      }
+
+      const [cart] = await Cart.findOrCreate({
+        where: { userId: req.user.id, shopId },
+        transaction,
+      });
+      const [cartItem, created] = await CartItem.findOrCreate({
+        where: { cartId: cart.id, productVariantId },
+        defaults: {
+          productId,
+          quantity,
+          unitPrice: listing.retailPrice,
+          sellerListingId: listing.id,
+        },
+        transaction,
+      });
+      if (!created) {
+        const newQty = cartItem.quantity + quantity;
+        if (availableStock < newQty) {
+          throw new AppError(400, `Cannot add more. Only ${availableStock} units in stock (${cartItem.quantity} already in cart).`);
+        }
+        await cartItem.update(
+          { quantity: newQty, unitPrice: listing.retailPrice, sellerListingId: listing.id },
+          { transaction },
+        );
+      }
+      return cartItem;
+    });
     res.status(201).json({ item });
   }),
 );
@@ -340,7 +403,9 @@ router.patch(
     const [listing, inventory] = await Promise.all([
       SellerListing.findOne({
         where: {
+          ...(item.sellerListingId ? { id: item.sellerListingId } : {}),
           shopId: cart.shopId,
+          productId: item.productId,
           productVariantId: item.productVariantId,
           isActive: true,
         },
@@ -369,6 +434,7 @@ router.patch(
     await item.update({
       quantity,
       unitPrice: listing.retailPrice,
+      sellerListingId: listing.id,
     });
 
     return res.json({
@@ -403,6 +469,129 @@ router.delete(
   }),
 );
 
+
+
+/* ========================================================================== */
+/*                         CUSTOMER AVAILABLE COUPONS                         */
+/* ========================================================================== */
+
+router.get(
+  '/available-coupons',
+  wrap(async (req, res) => {
+    const shopId = Number(req.query.shopId);
+
+    if (!Number.isInteger(shopId) || shopId <= 0) {
+      throw new AppError(400, 'A valid shopId is required.');
+    }
+
+    // Only show coupons for a shop that has items in this customer's cart.
+    const cart = await Cart.findOne({
+      where: {
+        userId: req.user.id,
+        shopId,
+      },
+    });
+
+    if (!cart) {
+      return res.json({ items: [] });
+    }
+
+    const cartItem = await CartItem.findOne({
+      where: { cartId: cart.id },
+      attributes: ['id'],
+    });
+
+    if (!cartItem) {
+      return res.json({ items: [] });
+    }
+
+    const shop = await Shop.findOne({
+      where: {
+        id: shopId,
+        status: 'active',
+      },
+      attributes: ['id'],
+    });
+
+    if (!shop) {
+      return res.json({ items: [] });
+    }
+
+    const today = new Date();
+
+    const coupons = await Coupon.findAll({
+      where: {
+        shopId,
+        status: 'active',
+        startDate: { [Op.lte]: today },
+        expiryDate: { [Op.gte]: today },
+        ...(undefined),
+      },
+      attributes: [
+        'id',
+        'code',
+        'discountType',
+        'discountValue',
+        'maxDiscountAmount',
+        'minimumOrderAmount',
+        'totalUsageLimit',
+        'perCustomerUsageLimit',
+        'usedCount',
+        'startDate',
+        'expiryDate',
+      ],
+      order: [['expiryDate', 'ASC']],
+    });
+
+    const availableCoupons = [];
+
+    for (const coupon of coupons) {
+      // Check the overall coupon usage limit.
+      if (
+        coupon.totalUsageLimit !== null &&
+        coupon.totalUsageLimit !== undefined &&
+        Number(coupon.usedCount) >= Number(coupon.totalUsageLimit)
+      ) {
+        continue;
+      }
+
+      // Check how many times this customer has used or reserved this coupon.
+      if (
+        coupon.perCustomerUsageLimit !== null &&
+        coupon.perCustomerUsageLimit !== undefined
+      ) {
+        const customerUsage = await CouponRedemption.count({
+          where: {
+            couponId: coupon.id,
+            shopId,
+            customerId: req.user.id,
+            status: { [Op.in]: ['reserved', 'redeemed'] },
+          },
+        });
+
+        if (customerUsage >= Number(coupon.perCustomerUsageLimit)) {
+          continue;
+        }
+      }
+
+      // Return only customer-safe coupon information.
+      availableCoupons.push({
+        id: coupon.id,
+        code: coupon.code,
+        discountType: coupon.discountType,
+        discountValue: coupon.discountValue,
+        maxDiscountAmount: coupon.maxDiscountAmount,
+        minimumOrderAmount: coupon.minimumOrderAmount,
+        startDate: coupon.startDate,
+        expiryDate: coupon.expiryDate,
+      });
+    }
+
+    res.json({ items: availableCoupons });
+  }),
+);
+
+
 /* ========================================================================== */
 /*                            CHECKOUT & PAYMENTS                             */
 /* ========================================================================== */
@@ -421,6 +610,27 @@ const checkoutSchema = z.object({
 });
 
 async function loadCheckoutCart({ userId, shopId, requestedItems, transaction }) {
+  if (transaction) {
+    await User.findByPk(userId, {
+      transaction,
+      lock: transaction.LOCK.UPDATE,
+    });
+  }
+  const otherCarts = await Cart.findAll({
+    where: { userId, shopId: { [Op.ne]: shopId } },
+    attributes: ['id'],
+    transaction,
+  });
+  if (otherCarts.length) {
+    const otherCartIds = otherCarts.map((cart) => cart.id);
+    const otherItem = await CartItem.findOne({
+      where: { cartId: otherCartIds },
+      transaction,
+    });
+    if (otherItem) {
+      throw new AppError(409, 'Your cart contains items from another shop. Complete that shop’s checkout or clear your cart before checking out.');
+    }
+  }
   const cart = await Cart.findOne({
     where: { userId, shopId },
     transaction,
@@ -436,6 +646,8 @@ async function loadCheckoutCart({ userId, shopId, requestedItems, transaction })
   const items = cartItems.map((item) => ({
     productVariantId: item.productVariantId,
     quantity: item.quantity,
+    sellerListingId: item.sellerListingId,
+    productId: item.productId,
   }));
   if (requestedItems) {
     const canonical = (rows) =>
@@ -458,8 +670,10 @@ async function priceCart({ userId, shop, address, requestedItems, transaction, c
   for (const item of items) {
     const listing = await SellerListing.findOne({
       where: {
+        ...(item.sellerListingId ? { id: item.sellerListingId } : {}),
         shopId: shop.id,
         productVariantId: item.productVariantId,
+        productId: item.productId,
         isActive: true,
       },
       include: [{
@@ -964,6 +1178,21 @@ router.post('/orders/:id/reorder', wrap(async (req, res) => {
   const items = await OrderItem.findAll({ where: { orderId: order.id } });
   if (!items.length) throw new AppError(400, 'This order has no items to reorder.');
   const result = await sequelize.transaction(async (t) => {
+    await User.findByPk(req.user.id, { transaction: t, lock: t.LOCK.UPDATE });
+    const otherCarts = await Cart.findAll({
+      where: { userId: req.user.id, shopId: { [Op.ne]: order.shopId } },
+      attributes: ['id'],
+      transaction: t,
+    });
+    if (otherCarts.length) {
+      const otherItem = await CartItem.findOne({
+        where: { cartId: otherCarts.map((cart) => cart.id) },
+        transaction: t,
+      });
+      if (otherItem) {
+        throw new AppError(409, 'Your cart contains items from another shop. Complete that shop’s checkout or clear your cart before reordering.');
+      }
+    }
     const [cart] = await Cart.findOrCreate({ where: { userId: req.user.id, shopId: order.shopId }, transaction: t, defaults: { userId: req.user.id, shopId: order.shopId } });
     const added = [];
     const unavailable = [];
@@ -974,8 +1203,8 @@ router.post('/orders/:id/reorder', wrap(async (req, res) => {
       const existing = await CartItem.findOne({ where: { cartId: cart.id, productVariantId: oldItem.productVariantId }, transaction: t, lock: t.LOCK.UPDATE });
       const desired = (existing?.quantity || 0) + oldItem.quantity;
       const quantity = Math.min(desired, stock.quantity);
-      if (existing) await existing.update({ quantity, unitPrice: listing.retailPrice }, { transaction: t });
-      else await CartItem.create({ cartId: cart.id, productId: listing.productId, productVariantId: oldItem.productVariantId, quantity, unitPrice: listing.retailPrice }, { transaction: t });
+      if (existing) await existing.update({ quantity, unitPrice: listing.retailPrice, sellerListingId: listing.id }, { transaction: t });
+      else await CartItem.create({ cartId: cart.id, productId: listing.productId, productVariantId: oldItem.productVariantId, sellerListingId: listing.id, quantity, unitPrice: listing.retailPrice }, { transaction: t });
       added.push({ name: oldItem.productName, quantity });
     }
     return { added, unavailable };

@@ -2,10 +2,6 @@
 
 
 
-
-
-
-
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../services/api.js';
@@ -107,15 +103,20 @@ export default function Shops() {
 
     setPending(shop.id);
     setError('');
+    setNotice('');
 
     try {
-      await api.patch(`/admin/shops/${shop.id}`, { status: next });
+      await api.patch(`/admin/shops/${shop.id}`, {
+        status: next,
+      });
+
       setNotice(
         `${shop.name} is now ${
           next === 'active' ? 'active' : 'inactive'
         }.`
       );
-      load();
+
+      await load();
     } catch (e) {
       setError(e.message);
     } finally {
@@ -126,6 +127,7 @@ export default function Shops() {
   const resend = async (shop) => {
     setPending(shop.id);
     setError('');
+    setNotice('');
 
     try {
       const response = await api.post(
@@ -204,6 +206,7 @@ export default function Shops() {
 
     setPending(shop.id);
     setError('');
+    setNotice('');
 
     try {
       await api.delete(`/admin/shops/${shop.id}`);
@@ -326,46 +329,55 @@ export default function Shops() {
                     )}
                   </td>
 
-                  {/* Small status toggle */}
+                  {/* STATUS TOGGLE - SAME STYLE AS MANAGE CATEGORIES */}
                   <td className="px-4 py-3">
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        role="switch"
-                        aria-checked={s.status === 'active'}
-                        aria-label={`Set ${s.name} ${
-                          s.status === 'active' ? 'inactive' : 'active'
-                        }`}
-                        disabled={pending === s.id}
-                        onClick={() => toggleStatus(s)}
-                        className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 ${
-                          s.status === 'active'
-                            ? 'bg-blue-600'
-                            : 'bg-slate-300'
-                        }`}
-                      >
-                        <span
-                          className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform duration-200 ${
-                            s.status === 'active'
-                              ? 'translate-x-4'
-                              : 'translate-x-0.5'
-                          }`}
-                        />
-                      </button>
-
+                    <div className="flex flex-col items-start gap-2">
                       <span
-                        className={`text-xs font-medium ${
+                        className={`rounded-full px-3 py-1.5 text-xs font-semibold ${
                           s.status === 'active'
-                            ? 'text-blue-700'
-                            : 'text-slate-500'
+                            ? 'bg-green-100 text-green-800'
+                            : 'bg-gray-200 text-gray-700'
                         }`}
                       >
                         {s.status === 'active' ? 'Active' : 'Inactive'}
                       </span>
+
+                      <button
+                        type="button"
+                        onClick={() => toggleStatus(s)}
+                        disabled={pending === s.id}
+                        role="switch"
+                        aria-checked={s.status === 'active'}
+                        aria-label={`Change ${s.name} status`}
+                        title={
+                          s.status === 'active'
+                            ? 'Deactivate'
+                            : 'Activate'
+                        }
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                          s.status === 'active'
+                            ? 'bg-green-600'
+                            : 'bg-slate-300'
+                        }`}
+                      >
+                        <span
+                          className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${
+                            s.status === 'active'
+                              ? 'translate-x-6'
+                              : 'translate-x-1'
+                          }`}
+                        />
+                      </button>
+
+                      {pending === s.id && (
+                        <span className="text-xs text-gray-500">
+                          Updating...
+                        </span>
+                      )}
                     </div>
                   </td>
 
-                  {/* Actions: View Shop, Edit and Delete */}
+                  {/* ACTIONS */}
                   <td className="px-4 py-3">
                     <div className="flex justify-end gap-2">
                       <Button
@@ -418,7 +430,7 @@ export default function Shops() {
         />
       )}
 
-      {/* Edit shop popup */}
+      {/* EDIT SHOP POPUP */}
       {editingShop && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4"
@@ -543,7 +555,7 @@ export default function Shops() {
         </div>
       )}
 
-      {/* Shop details and employee popup */}
+      {/* SHOP DETAILS AND EMPLOYEE POPUP */}
       {selectedShop && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
@@ -690,4 +702,5 @@ export default function Shops() {
     </>
   );
 }
+
 

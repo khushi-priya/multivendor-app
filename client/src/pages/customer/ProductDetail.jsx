@@ -1,9 +1,45 @@
 
+
+
 // import { useEffect, useMemo, useState } from 'react';
 // import { useNavigate, useParams, Link } from 'react-router-dom';
 // import { api } from '../../services/api.js';
 // import { useAuth } from '../../context/AuthContext.jsx';
 // import { Alert, Button, Card, Spinner } from '../../components/ui.jsx';
+
+// const normalizeAttributeName = (name = '') =>
+//   String(name).toLowerCase().replace(/[\s_-]/g, '');
+
+// const getVariantAttribute = (variant, names) => {
+//   const values = variant?.variantValues || [];
+
+//   const match = values.find((item) =>
+//     names.includes(normalizeAttributeName(item.attribute?.name))
+//   );
+
+//   return match?.attributeValue?.value ?? null;
+// };
+
+// const getVariantSize = (variant) =>
+//   getVariantAttribute(variant, ['size', 'packsize', 'weight']) ||
+//   variant?.variantName ||
+//   null;
+
+// const getVariantColor = (variant) =>
+//   getVariantAttribute(variant, ['color', 'colour']);
+
+// const getVariantOptionPrice = (variant) => {
+//   const listings = (variant?.listings || []).filter(
+//     (item) =>
+//       item.retailPrice != null &&
+//       Number(item.retailPrice) > 0 &&
+//       Number(item.availableStock ?? item.stock ?? 0) > 0
+//   );
+
+//   return listings.length
+//     ? Math.min(...listings.map((item) => Number(item.retailPrice)))
+//     : null;
+// };
 
 // export default function CustomerProductDetail() {
 //   const { id } = useParams();
@@ -17,6 +53,8 @@
 
 //   const [selectedVariantId, setSelectedVariantId] = useState(null);
 //   const [selectedShopId, setSelectedShopId] = useState(null);
+//   const [sellerListings, setSellerListings] = useState([]);
+//   const [sellersLoading, setSellersLoading] = useState(false);
 //   const [quantity, setQuantity] = useState(1);
 
 //   const [addingToCart, setAddingToCart] = useState(false);
@@ -31,15 +69,18 @@
 //   const [hasMoreReviews, setHasMoreReviews] = useState(false);
 //   const [reviewsLoading, setReviewsLoading] = useState(false);
 //   const [reviewsError, setReviewsError] = useState('');
+
 //   const [reviewForm, setReviewForm] = useState({
 //     rating: 5,
 //     title: '',
 //     body: '',
 //   });
+
 //   const [reviewMessage, setReviewMessage] = useState('');
 //   const [reviewError, setReviewError] = useState('');
 //   const [reviewBusy, setReviewBusy] = useState(false);
 //   const [reviewEditing, setReviewEditing] = useState(false);
+
 //   const [reviewEligibility, setReviewEligibility] = useState({
 //     loading: false,
 //     eligible: false,
@@ -54,6 +95,8 @@
 //   const [relatedProducts, setRelatedProducts] = useState([]);
 //   const [relatedRatings, setRelatedRatings] = useState({});
 //   const [relatedLoading, setRelatedLoading] = useState(false);
+
+//   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
 
 //   // Check review eligibility
 //   useEffect(() => {
@@ -131,8 +174,12 @@
 //         setActiveImage(sortedImages[0]?.imageUrl || null);
 
 //         if (prod.variants?.length) {
-//           const firstVariant = prod.variants[0];
+//           const firstVariant =
+//             prod.variants.find((variant) => variant.listings?.length) ||
+//             prod.variants[0];
+
 //           setSelectedVariantId(firstVariant.id);
+
 //           setSelectedShopId(
 //             firstVariant.listings?.[0]?.shopId || null
 //           );
@@ -210,6 +257,72 @@
 //     };
 //   }, [id, user]);
 
+//   // Automatically select the first available seller for the selected variant.
+//   // No seller dropdown is displayed to the customer.
+//   useEffect(() => {
+//     let mounted = true;
+
+//     if (!selectedVariantId) {
+//       setSellerListings([]);
+//       setSelectedShopId(null);
+//       setSellersLoading(false);
+
+//       return () => {
+//         mounted = false;
+//       };
+//     }
+
+//     setSellerListings([]);
+//     setSelectedShopId(null);
+//     setSellersLoading(true);
+
+//     api.get(
+//       `/store/products/${id}?variantId=${encodeURIComponent(selectedVariantId)}`
+//     )
+//       .then((response) => {
+//         if (!mounted) return;
+
+//         const items = (response.sellers || []).map((listing) => ({
+//           ...listing,
+//           id: listing.listingId ?? listing.id,
+//           retailPrice: Number(
+//             listing.sellingPrice ?? listing.retailPrice
+//           ),
+//           stock: Number(
+//             listing.availableStock ?? listing.stock
+//           ),
+//           availableStock: Number(
+//             listing.availableStock ?? listing.stock
+//           ),
+//           gstRate: Number(
+//             listing.gstPercentage ?? listing.gstRate ?? 0
+//           ),
+//         }));
+
+//         // Automatically choose the first available seller.
+//         setSellerListings(items);
+//         setSelectedShopId(
+//           items[0] ? Number(items[0].shopId) : null
+//         );
+//       })
+//       .catch((err) => {
+//         if (mounted) {
+//           setSellerListings([]);
+//           setSelectedShopId(null);
+//           setError(
+//             err.message || 'Unable to load available seller.'
+//           );
+//         }
+//       })
+//       .finally(() => {
+//         if (mounted) setSellersLoading(false);
+//       });
+
+//     return () => {
+//       mounted = false;
+//     };
+//   }, [id, selectedVariantId]);
+
 //   // Sort gallery images: primary image first
 //   const productImages = useMemo(() => {
 //     return [...(product?.images || [])].sort(
@@ -258,7 +371,6 @@
 
 //         if (!mounted) return;
 
-//         // Support common paginated API response shapes.
 //         const items = Array.isArray(response)
 //           ? response
 //           : response.items ||
@@ -278,7 +390,6 @@
 
 //         setRelatedProducts(filtered);
 
-//         // Get actual review averages and counts for related products.
 //         const ratingResults = await Promise.allSettled(
 //           filtered.map(async (item) => {
 //             const result = await api.get(
@@ -331,18 +442,97 @@
 //   );
 
 //   const selectedListing =
-//     selectedVariant?.listings?.find(
+//     sellerListings.find(
 //       (listing) => Number(listing.shopId) === Number(selectedShopId)
-//     ) || selectedVariant?.listings?.[0];
+//     ) || sellerListings[0] || null;
 
-//   const price = Number(
-//     selectedListing?.retailPrice ??
-//       selectedVariant?.price ??
-//       product?.basePrice ??
-//       0
+//   const price = selectedListing
+//     ? Number(selectedListing.retailPrice)
+//     : null;
+
+//   const currentStock = Number(
+//     selectedListing?.availableStock ??
+//     selectedListing?.stock ??
+//     0
 //   );
 
-//   const currentStock = Number(selectedListing?.stock ?? 0);
+//   // Derive available sizes from product variants.
+//   const sizeOptions = useMemo(() => {
+//     const variants = product?.variants || [];
+//     const values = [];
+
+//     variants.forEach((variant) => {
+//       const size = getVariantSize(variant);
+
+//       if (
+//         size != null &&
+//         !values.some(
+//           (item) =>
+//             String(item).toLowerCase() ===
+//             String(size).toLowerCase()
+//         )
+//       ) {
+//         values.push(size);
+//       }
+//     });
+
+//     return values;
+//   }, [product]);
+
+//   // Derive available colors from product variants.
+//   const colorOptions = useMemo(() => {
+//     const variants = product?.variants || [];
+//     const values = [];
+
+//     variants.forEach((variant) => {
+//       const color = getVariantColor(variant);
+
+//       if (
+//         color != null &&
+//         !values.some(
+//           (item) =>
+//             String(item).toLowerCase() ===
+//             String(color).toLowerCase()
+//         )
+//       ) {
+//         values.push(color);
+//       }
+//     });
+
+//     return values;
+//   }, [product]);
+
+//   const selectedSize = selectedVariant
+//     ? getVariantSize(selectedVariant)
+//     : null;
+
+//   const selectedColor = selectedVariant
+//     ? getVariantColor(selectedVariant)
+//     : null;
+
+//   // Find the correct variant for selected size and color.
+//   const findMatchingVariant = ({ size, color }) => {
+//     const variants = product?.variants || [];
+
+//     return (
+//       variants.find((variant) => {
+//         const variantSize = getVariantSize(variant);
+//         const variantColor = getVariantColor(variant);
+
+//         const sizeMatches =
+//           size == null ||
+//           String(variantSize).toLowerCase() ===
+//             String(size).toLowerCase();
+
+//         const colorMatches =
+//           color == null ||
+//           String(variantColor).toLowerCase() ===
+//             String(color).toLowerCase();
+
+//         return sizeMatches && colorMatches;
+//       }) || null
+//     );
+//   };
 
 //   const ratingBreakdown = useMemo(() => {
 //     const counts = [0, 0, 0, 0, 0];
@@ -358,6 +548,8 @@
 //     return counts;
 //   }, [ratingDistribution]);
 
+//   // Keep Size and Color as selectors.
+//   // Keep Pack Size and other attributes in Product Highlights.
 //   const highlights = useMemo(() => {
 //     const values = selectedVariant?.variantValues || [];
 
@@ -366,7 +558,17 @@
 //         name: item.attribute?.name,
 //         value: item.attributeValue?.value,
 //       }))
-//       .filter((item) => item.name && item.value);
+//       .filter((item) => {
+//         if (!item.name || !item.value) return false;
+
+//         const attributeName = normalizeAttributeName(item.name);
+
+//         return ![
+//           'size',
+//           'color',
+//           'colour',
+//         ].includes(attributeName);
+//       });
 //   }, [selectedVariant]);
 
 //   const StarRating = ({ rating }) => {
@@ -398,23 +600,15 @@
 //     const availableListing = listings.find(
 //       (listing) =>
 //         listing.retailPrice != null &&
-//         Number(listing.retailPrice) > 0
+//         Number(listing.retailPrice) > 0 &&
+//         Number(
+//           listing.availableStock ?? listing.stock ?? 0
+//         ) > 0
 //     );
 
-//     if (availableListing) {
-//       return Number(availableListing.retailPrice);
-//     }
-
-//     const variantWithPrice = item.variants?.find(
-//       (variant) =>
-//         variant.price != null && Number(variant.price) > 0
-//     );
-
-//     if (variantWithPrice) {
-//       return Number(variantWithPrice.price);
-//     }
-
-//     return Number(item.basePrice || 0);
+//     return availableListing
+//       ? Number(availableListing.retailPrice)
+//       : null;
 //   };
 
 //   const getRelatedImage = (item) => {
@@ -429,17 +623,49 @@
 //   };
 
 //   const handleVariantChange = (variantId) => {
-//     setSelectedVariantId(variantId);
-
 //     const variant = product?.variants?.find(
 //       (item) => Number(item.id) === Number(variantId)
 //     );
 
-//     setSelectedShopId(
-//       variant?.listings?.[0]?.shopId || null
-//     );
+//     if (!variant) return;
 
+//     setSelectedVariantId(variant.id);
+//     setSellerListings([]);
+//     setSelectedShopId(null);
 //     setQuantity(1);
+//     setError('');
+//   };
+
+//   const handleSizeChange = (size) => {
+//     const matchingVariant =
+//       findMatchingVariant({
+//         size,
+//         color: selectedColor,
+//       }) ||
+//       findMatchingVariant({
+//         size,
+//         color: null,
+//       });
+
+//     if (matchingVariant) {
+//       handleVariantChange(matchingVariant.id);
+//     }
+//   };
+
+//   const handleColorChange = (color) => {
+//     const matchingVariant =
+//       findMatchingVariant({
+//         size: selectedSize,
+//         color,
+//       }) ||
+//       findMatchingVariant({
+//         size: null,
+//         color,
+//       });
+
+//     if (matchingVariant) {
+//       handleVariantChange(matchingVariant.id);
+//     }
 //   };
 
 //   const handleAddToCart = async () => {
@@ -448,10 +674,8 @@
 //       return;
 //     }
 
-//     if (!selectedVariantId || !selectedShopId) {
-//       setError(
-//         'Please select an available product option and shop.'
-//       );
+//     if (!selectedVariantId || !selectedShopId || !selectedListing) {
+//       setError('No available seller for this product option.');
 //       return;
 //     }
 
@@ -472,6 +696,7 @@
 //     try {
 //       await api.post('/customer/cart', {
 //         shopId: Number(selectedShopId),
+//         sellerListingId: Number(selectedListing.id),
 //         productId: product.id,
 //         productVariantId: Number(selectedVariantId),
 //         quantity: Number(quantity),
@@ -662,7 +887,6 @@
 
 //   return (
 //     <div className="mx-auto w-full max-w-none space-y-5 pb-10">
-
 //       {/* Breadcrumb */}
 //       <nav className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
 //         <Link to="/" className="hover:text-indigo-600">
@@ -687,11 +911,9 @@
 
 //       {/* Main Layout */}
 //       <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-12">
-
 //         {/* LEFT: Product Images */}
 //         <div className="space-y-3 lg:col-span-5">
 //           <div className="relative flex aspect-square w-full items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-white p-3">
-
 //             {activeImage ? (
 //               <img
 //                 src={activeImage}
@@ -704,7 +926,6 @@
 //               </span>
 //             )}
 
-//             {/* Previous image */}
 //             {productImages.length > 1 && (
 //               <button
 //                 type="button"
@@ -716,7 +937,6 @@
 //               </button>
 //             )}
 
-//             {/* Next image */}
 //             {productImages.length > 1 && (
 //               <button
 //                 type="button"
@@ -763,11 +983,39 @@
 //               ))}
 //             </div>
 //           )}
+
+//           {/* Product Description - Below Product Image */}
+//           {product.description && (
+//             <div className="rounded-xl border border-slate-200 bg-white p-4">
+//               <h2 className="mb-2 text-base font-bold text-slate-900">
+//                 Product Description
+//               </h2>
+
+//               <p className="whitespace-pre-line break-words text-sm leading-6 text-slate-600">
+//                 {descriptionExpanded
+//                   ? product.description
+//                   : product.description.length > 220
+//                     ? `${product.description.slice(0, 220).trimEnd()}...`
+//                     : product.description}
+//               </p>
+
+//               {product.description.length > 220 && (
+//                 <button
+//                   type="button"
+//                   onClick={() =>
+//                     setDescriptionExpanded((previous) => !previous)
+//                   }
+//                   className="mt-2 text-sm font-semibold text-indigo-600 hover:text-indigo-800"
+//                 >
+//                   {descriptionExpanded ? 'Read less' : 'Read more'}
+//                 </button>
+//               )}
+//             </div>
+//           )}
 //         </div>
 
 //         {/* RIGHT: Details, Purchase and Reviews */}
 //         <div className="min-w-0 space-y-5 lg:col-span-7">
-
 //           {/* Product Information */}
 //           <div>
 //             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -782,7 +1030,6 @@
 //               )}
 //             </div>
 
-//             {/* Product name with small rating on the right */}
 //             <div className="mt-2 flex items-start justify-between gap-3">
 //               <h1 className="min-w-0 flex-1 text-2xl font-bold leading-snug text-slate-900 sm:text-3xl">
 //                 {product.name}
@@ -795,37 +1042,43 @@
 //                   title={`${reviewCount.toLocaleString('en-IN')} Ratings & Reviews`}
 //                 >
 //                   <span>{reviewAverage.toFixed(1)}</span>
-
-//                   <span className="text-amber-500">
-//                     ★
-//                   </span>
-
+//                   <span className="text-amber-500">★</span>
 //                   <span className="text-slate-500">
 //                     ({reviewCount.toLocaleString('en-IN')})
 //                   </span>
 //                 </div>
 //               )}
 //             </div>
-
-//             <p className="mt-3 text-sm leading-relaxed text-slate-600">
-//               {product.description || 'No description provided.'}
-//             </p>
 //           </div>
 
 //           {/* Price and Stock */}
 //           <div className="border-b border-slate-200 pb-4">
 //             <div className="flex flex-wrap items-baseline gap-2">
 //               <span className="text-3xl font-extrabold text-slate-900">
-//                 ₹{price.toFixed(2)}
+//                 {price == null
+//                   ? 'No seller available'
+//                   : `₹${price.toFixed(2)}`}
 //               </span>
 
-//               <span className="text-xs text-slate-500">
-//                 Inclusive of applicable taxes
-//               </span>
+//               {selectedListing && (
+//                 <span className="text-xs text-slate-500">
+//                   {selectedListing.gstApplicable
+//                     ? `GST ${Number(selectedListing.gstRate).toFixed(2)}% ${
+//                         selectedListing.priceIncludesGst
+//                           ? 'included in price'
+//                           : 'added at checkout'
+//                       }`
+//                     : 'No product GST configured'}
+//                 </span>
+//               )}
 //             </div>
 
 //             <div className="mt-2">
-//               {currentStock > 0 ? (
+//               {sellersLoading ? (
+//                 <span className="text-xs text-slate-500">
+//                   Checking availability...
+//                 </span>
+//               ) : currentStock > 0 ? (
 //                 <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
 //                   In Stock · {currentStock} available
 //                 </span>
@@ -837,53 +1090,127 @@
 //             </div>
 //           </div>
 
-//           {/* Variant Selection */}
+//           {/* Size Selector */}
 //           {product.variants?.length > 0 && (
+//             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+//               {sizeOptions.length > 0 && (
+//                 <div className="min-w-0">
+//                   <h3 className="mb-3 text-sm font-bold text-slate-900">
+//                     Select Size
+//                   </h3>
+
+//                   <div className="flex flex-wrap gap-2">
+//                     {sizeOptions.map((size) => {
+//                       const matchingVariant =
+//                         findMatchingVariant({
+//                           size,
+//                           color: selectedColor,
+//                         }) ||
+//                         findMatchingVariant({
+//                           size,
+//                           color: null,
+//                         });
+
+//                       const selected =
+//                         String(selectedSize).toLowerCase() ===
+//                         String(size).toLowerCase();
+
+//                       const optionPrice = matchingVariant
+//                         ? getVariantOptionPrice(matchingVariant)
+//                         : null;
+
+//                       const available = matchingVariant?.listings?.some(
+//                         (listing) =>
+//                           Number(
+//                             listing.availableStock ?? listing.stock
+//                           ) > 0
+//                       );
+
+//                       return (
+//                         <button
+//                           key={String(size)}
+//                           type="button"
+//                           onClick={() => handleSizeChange(size)}
+//                           className={`min-w-16 rounded-lg border px-3 py-2 text-center transition ${
+//                             selected
+//                               ? 'border-indigo-600 bg-indigo-50 text-indigo-700 ring-1 ring-indigo-600'
+//                               : 'border-slate-300 bg-white text-slate-700 hover:border-indigo-400'
+//                           }`}
+//                         >
+//                           <span className="block text-sm font-bold">
+//                             {size}
+//                           </span>
+
+//                           <span className="mt-1 block text-xs">
+//                             {optionPrice == null
+//                               ? 'No seller'
+//                               : `From ₹${optionPrice.toFixed(2)}`}
+//                           </span>
+
+//                           {!available && (
+//                             <span className="mt-1 block text-[10px] text-rose-600">
+//                               Out of stock
+//                             </span>
+//                           )}
+//                         </button>
+//                       );
+//                     })}
+//                   </div>
+//                 </div>
+//               )}
+//             </div>
+//           )}
+
+//           {/* Color Selector */}
+//           {colorOptions.length > 0 && (
 //             <div>
 //               <h3 className="mb-3 text-sm font-bold text-slate-900">
-//                 Select Size / Variant
+//                 Select Color
+
+//                 {selectedColor && (
+//                   <span className="ml-2 font-normal text-slate-500">
+//                     {selectedColor}
+//                   </span>
+//                 )}
 //               </h3>
 
 //               <div className="flex flex-wrap gap-2">
-//                 {product.variants.map((variant) => {
+//                 {colorOptions.map((color) => {
+//                   const matchingVariant =
+//                     findMatchingVariant({
+//                       size: selectedSize,
+//                       color,
+//                     }) ||
+//                     findMatchingVariant({
+//                       size: null,
+//                       color,
+//                     });
+
 //                   const selected =
-//                     Number(selectedVariantId) ===
-//                     Number(variant.id);
+//                     String(selectedColor).toLowerCase() ===
+//                     String(color).toLowerCase();
 
-//                   const variantPrice = Number(
-//                     variant.listings?.[0]?.retailPrice ??
-//                       variant.price ??
-//                       0
-//                   );
-
-//                   const available = variant.listings?.some(
-//                     (listing) => Number(listing.stock) > 0
+//                   const available = matchingVariant?.listings?.some(
+//                     (listing) =>
+//                       Number(listing.stock) > 0
 //                   );
 
 //                   return (
 //                     <button
-//                       key={variant.id}
+//                       key={String(color)}
 //                       type="button"
-//                       onClick={() =>
-//                         handleVariantChange(variant.id)
-//                       }
-//                       className={`min-w-20 rounded-lg border px-3 py-2 text-center transition ${
+//                       onClick={() => handleColorChange(color)}
+//                       className={`rounded-lg border px-4 py-2 text-sm font-semibold transition ${
 //                         selected
 //                           ? 'border-indigo-600 bg-indigo-50 text-indigo-700 ring-1 ring-indigo-600'
 //                           : 'border-slate-300 bg-white text-slate-700 hover:border-indigo-400'
 //                       }`}
 //                     >
-//                       <span className="block text-sm font-bold">
-//                         {variant.variantName}
-//                       </span>
-
-//                       <span className="mt-1 block text-xs">
-//                         ₹{variantPrice.toFixed(2)}
-//                       </span>
+//                       {color}
 
 //                       {!available && (
-//                         <span className="mt-1 block text-[10px] text-rose-600">
-//                           Out of stock
+//                         <span className="ml-1 text-[10px] text-rose-600">
+//                           (Out of stock)
 //                         </span>
 //                       )}
 //                     </button>
@@ -893,34 +1220,65 @@
 //             </div>
 //           )}
 
-//           {/* Seller Selection */}
-//           {selectedVariant?.listings?.length > 0 && (
-//             <div>
-//               <label className="mb-2 block text-sm font-bold text-slate-900">
-//                 Select Seller
-//               </label>
+//           {/* Generic Variant Selector */}
+//           {product.variants?.length > 0 &&
+//             sizeOptions.length === 0 &&
+//             colorOptions.length === 0 && (
+//               <div>
+//                 <h3 className="mb-3 text-sm font-bold text-slate-900">
+//                   Select Variant
+//                 </h3>
 
-//               <select
-//                 value={selectedListing?.shopId || ''}
-//                 onChange={(event) => {
-//                   setSelectedShopId(Number(event.target.value));
-//                   setQuantity(1);
-//                 }}
-//                 className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
-//               >
-//                 {selectedVariant.listings.map((listing) => (
-//                   <option
-//                     key={listing.shopId}
-//                     value={listing.shopId}
-//                   >
-//                     {listing.shopName} — ₹
-//                     {Number(listing.retailPrice).toFixed(2)}
-//                     {' '}({listing.stock} in stock)
-//                   </option>
-//                 ))}
-//               </select>
-//             </div>
-//           )}
+//                 <div className="flex flex-wrap gap-2">
+//                   {product.variants.map((variant) => {
+//                     const selected =
+//                       Number(selectedVariantId) ===
+//                       Number(variant.id);
+
+//                     const variantPrice =
+//                       getVariantOptionPrice(variant);
+
+//                     const available = variant.listings?.some(
+//                       (listing) =>
+//                         Number(
+//                           listing.availableStock ?? listing.stock
+//                         ) > 0
+//                     );
+
+//                     return (
+//                       <button
+//                         key={variant.id}
+//                         type="button"
+//                         onClick={() =>
+//                           handleVariantChange(variant.id)
+//                         }
+//                         className={`min-w-20 rounded-lg border px-3 py-2 text-center transition ${
+//                           selected
+//                             ? 'border-indigo-600 bg-indigo-50 text-indigo-700 ring-1 ring-indigo-600'
+//                             : 'border-slate-300 bg-white text-slate-700 hover:border-indigo-400'
+//                         }`}
+//                       >
+//                         <span className="block text-sm font-bold">
+//                           {variant.variantName}
+//                         </span>
+
+//                         <span className="mt-1 block text-xs">
+//                           {variantPrice == null
+//                             ? 'No seller'
+//                             : `From ₹${variantPrice.toFixed(2)}`}
+//                         </span>
+
+//                         {!available && (
+//                           <span className="mt-1 block text-[10px] text-rose-600">
+//                             Out of stock
+//                           </span>
+//                         )}
+//                       </button>
+//                     );
+//                   })}
+//                 </div>
+//               </div>
+//             )}
 
 //           {/* Product Highlights */}
 //           {highlights.length > 0 && (
@@ -988,7 +1346,12 @@
 //           <div className="flex items-center gap-3 border-b border-slate-200 pb-5">
 //             <Button
 //               onClick={handleAddToCart}
-//               disabled={addingToCart || currentStock <= 0}
+//               disabled={
+//                 addingToCart ||
+//                 sellersLoading ||
+//                 !selectedListing ||
+//                 currentStock <= 0
+//               }
 //               className="flex-1 justify-center py-2 text-sm font-semibold shadow-sm"
 //             >
 //               {addingToCart
@@ -1016,7 +1379,7 @@
 //             </button>
 //           </div>
 
-//           {/* Sold By */}
+//           {/* Sold By - retained instead of the seller dropdown */}
 //           {selectedListing && (
 //             <div className="rounded-xl border border-slate-200 bg-white p-4">
 //               <h3 className="mb-3 text-sm font-bold text-slate-900">
@@ -1030,7 +1393,7 @@
 //                   </p>
 
 //                   <p className="mt-1 text-xs text-slate-500">
-//                     Your selected seller
+//                     Seller of this product
 //                   </p>
 //                 </div>
 
@@ -1043,7 +1406,6 @@
 
 //           {/* Customer Reviews */}
 //           <section className="space-y-4 border-t border-slate-200 pt-5">
-
 //             <div>
 //               <h2 className="text-lg font-bold text-slate-900">
 //                 Product Ratings & Reviews
@@ -1119,7 +1481,7 @@
 //               </div>
 //             </div>
 
-//             {/* Write a Review */}
+//             {/* Review Eligibility */}
 //             {user?.role === 'customer' &&
 //               reviewEligibility.loading && (
 //                 <div
@@ -1177,6 +1539,7 @@
 //                 </div>
 //               )}
 
+//             {/* Write a Review */}
 //             {user?.role === 'customer' &&
 //               (reviewEligibility.eligible || reviewEditing) && (
 //                 <form
@@ -1490,16 +1853,14 @@ const getVariantAttribute = (variant, names) => {
   const values = variant?.variantValues || [];
 
   const match = values.find((item) =>
-    names.includes(
-      normalizeAttributeName(item.attribute?.name)
-    )
+    names.includes(normalizeAttributeName(item.attribute?.name))
   );
 
   return match?.attributeValue?.value ?? null;
 };
 
 const getVariantSize = (variant) =>
-  getVariantAttribute(variant, ['size']) ||
+  getVariantAttribute(variant, ['size', 'packsize', 'weight']) ||
   variant?.variantName ||
   null;
 
@@ -1507,15 +1868,16 @@ const getVariantColor = (variant) =>
   getVariantAttribute(variant, ['color', 'colour']);
 
 const getVariantOptionPrice = (variant) => {
-  const listing = variant?.listings?.find(
+  const listings = (variant?.listings || []).filter(
     (item) =>
       item.retailPrice != null &&
-      Number(item.retailPrice) > 0
+      Number(item.retailPrice) > 0 &&
+      Number(item.availableStock ?? item.stock ?? 0) > 0
   );
 
-  return Number(
-    listing?.retailPrice ?? variant?.price ?? 0
-  );
+  return listings.length
+    ? Math.min(...listings.map((item) => Number(item.retailPrice)))
+    : null;
 };
 
 export default function CustomerProductDetail() {
@@ -1530,6 +1892,8 @@ export default function CustomerProductDetail() {
 
   const [selectedVariantId, setSelectedVariantId] = useState(null);
   const [selectedShopId, setSelectedShopId] = useState(null);
+  const [sellerListings, setSellerListings] = useState([]);
+  const [sellersLoading, setSellersLoading] = useState(false);
   const [quantity, setQuantity] = useState(1);
 
   const [addingToCart, setAddingToCart] = useState(false);
@@ -1544,15 +1908,18 @@ export default function CustomerProductDetail() {
   const [hasMoreReviews, setHasMoreReviews] = useState(false);
   const [reviewsLoading, setReviewsLoading] = useState(false);
   const [reviewsError, setReviewsError] = useState('');
+
   const [reviewForm, setReviewForm] = useState({
     rating: 5,
     title: '',
     body: '',
   });
+
   const [reviewMessage, setReviewMessage] = useState('');
   const [reviewError, setReviewError] = useState('');
   const [reviewBusy, setReviewBusy] = useState(false);
   const [reviewEditing, setReviewEditing] = useState(false);
+
   const [reviewEligibility, setReviewEligibility] = useState({
     loading: false,
     eligible: false,
@@ -1567,6 +1934,8 @@ export default function CustomerProductDetail() {
   const [relatedProducts, setRelatedProducts] = useState([]);
   const [relatedRatings, setRelatedRatings] = useState({});
   const [relatedLoading, setRelatedLoading] = useState(false);
+
+  const [descriptionExpanded, setDescriptionExpanded] = useState(false);
 
   // Check review eligibility
   useEffect(() => {
@@ -1644,8 +2013,12 @@ export default function CustomerProductDetail() {
         setActiveImage(sortedImages[0]?.imageUrl || null);
 
         if (prod.variants?.length) {
-          const firstVariant = prod.variants[0];
+          const firstVariant =
+            prod.variants.find((variant) => variant.listings?.length) ||
+            prod.variants[0];
+
           setSelectedVariantId(firstVariant.id);
+
           setSelectedShopId(
             firstVariant.listings?.[0]?.shopId || null
           );
@@ -1722,6 +2095,72 @@ export default function CustomerProductDetail() {
       mounted = false;
     };
   }, [id, user]);
+
+  // Automatically select the first available seller for the selected variant.
+  // No seller dropdown is displayed to the customer.
+  useEffect(() => {
+    let mounted = true;
+
+    if (!selectedVariantId) {
+      setSellerListings([]);
+      setSelectedShopId(null);
+      setSellersLoading(false);
+
+      return () => {
+        mounted = false;
+      };
+    }
+
+    setSellerListings([]);
+    setSelectedShopId(null);
+    setSellersLoading(true);
+
+    api.get(
+      `/store/products/${id}?variantId=${encodeURIComponent(selectedVariantId)}`
+    )
+      .then((response) => {
+        if (!mounted) return;
+
+        const items = (response.sellers || []).map((listing) => ({
+          ...listing,
+          id: listing.listingId ?? listing.id,
+          retailPrice: Number(
+            listing.sellingPrice ?? listing.retailPrice
+          ),
+          stock: Number(
+            listing.availableStock ?? listing.stock
+          ),
+          availableStock: Number(
+            listing.availableStock ?? listing.stock
+          ),
+          gstRate: Number(
+            listing.gstPercentage ?? listing.gstRate ?? 0
+          ),
+        }));
+
+        // Automatically choose the first available seller.
+        setSellerListings(items);
+        setSelectedShopId(
+          items[0] ? Number(items[0].shopId) : null
+        );
+      })
+      .catch((err) => {
+        if (mounted) {
+          setSellerListings([]);
+          setSelectedShopId(null);
+          setError(
+            err.message || 'Unable to load available seller.'
+          );
+        }
+      })
+      .finally(() => {
+        if (mounted) setSellersLoading(false);
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, [id, selectedVariantId]);
 
   // Sort gallery images: primary image first
   const productImages = useMemo(() => {
@@ -1842,20 +2281,21 @@ export default function CustomerProductDetail() {
   );
 
   const selectedListing =
-    selectedVariant?.listings?.find(
+    sellerListings.find(
       (listing) => Number(listing.shopId) === Number(selectedShopId)
-    ) || selectedVariant?.listings?.[0];
+    ) || sellerListings[0] || null;
 
-  const price = Number(
-    selectedListing?.retailPrice ??
-      selectedVariant?.price ??
-      product?.basePrice ??
-      0
+  const price = selectedListing
+    ? Number(selectedListing.retailPrice)
+    : null;
+
+  const currentStock = Number(
+    selectedListing?.availableStock ??
+    selectedListing?.stock ??
+    0
   );
 
-  const currentStock = Number(selectedListing?.stock ?? 0);
-
-  // Derive available sizes from the product variants.
+  // Derive available sizes from product variants.
   const sizeOptions = useMemo(() => {
     const variants = product?.variants || [];
     const values = [];
@@ -1878,7 +2318,7 @@ export default function CustomerProductDetail() {
     return values;
   }, [product]);
 
-  // Derive available colors from the product variants.
+  // Derive available colors from product variants.
   const colorOptions = useMemo(() => {
     const variants = product?.variants || [];
     const values = [];
@@ -1909,7 +2349,7 @@ export default function CustomerProductDetail() {
     ? getVariantColor(selectedVariant)
     : null;
 
-  // Find the correct variant for a selected size and color.
+  // Find the correct variant for selected size and color.
   const findMatchingVariant = ({ size, color }) => {
     const variants = product?.variants || [];
 
@@ -1999,23 +2439,15 @@ export default function CustomerProductDetail() {
     const availableListing = listings.find(
       (listing) =>
         listing.retailPrice != null &&
-        Number(listing.retailPrice) > 0
+        Number(listing.retailPrice) > 0 &&
+        Number(
+          listing.availableStock ?? listing.stock ?? 0
+        ) > 0
     );
 
-    if (availableListing) {
-      return Number(availableListing.retailPrice);
-    }
-
-    const variantWithPrice = item.variants?.find(
-      (variant) =>
-        variant.price != null && Number(variant.price) > 0
-    );
-
-    if (variantWithPrice) {
-      return Number(variantWithPrice.price);
-    }
-
-    return Number(item.basePrice || 0);
+    return availableListing
+      ? Number(availableListing.retailPrice)
+      : null;
   };
 
   const getRelatedImage = (item) => {
@@ -2037,21 +2469,22 @@ export default function CustomerProductDetail() {
     if (!variant) return;
 
     setSelectedVariantId(variant.id);
-    setSelectedShopId(
-      variant.listings?.[0]?.shopId || null
-    );
+    setSellerListings([]);
+    setSelectedShopId(null);
     setQuantity(1);
     setError('');
   };
 
   const handleSizeChange = (size) => {
-    const matchingVariant = findMatchingVariant({
-      size,
-      color: selectedColor,
-    }) || findMatchingVariant({
-      size,
-      color: null,
-    });
+    const matchingVariant =
+      findMatchingVariant({
+        size,
+        color: selectedColor,
+      }) ||
+      findMatchingVariant({
+        size,
+        color: null,
+      });
 
     if (matchingVariant) {
       handleVariantChange(matchingVariant.id);
@@ -2059,13 +2492,15 @@ export default function CustomerProductDetail() {
   };
 
   const handleColorChange = (color) => {
-    const matchingVariant = findMatchingVariant({
-      size: selectedSize,
-      color,
-    }) || findMatchingVariant({
-      size: null,
-      color,
-    });
+    const matchingVariant =
+      findMatchingVariant({
+        size: selectedSize,
+        color,
+      }) ||
+      findMatchingVariant({
+        size: null,
+        color,
+      });
 
     if (matchingVariant) {
       handleVariantChange(matchingVariant.id);
@@ -2078,10 +2513,8 @@ export default function CustomerProductDetail() {
       return;
     }
 
-    if (!selectedVariantId || !selectedShopId) {
-      setError(
-        'Please select an available product option and shop.'
-      );
+    if (!selectedVariantId || !selectedShopId || !selectedListing) {
+      setError('No available seller for this product option.');
       return;
     }
 
@@ -2102,6 +2535,7 @@ export default function CustomerProductDetail() {
     try {
       await api.post('/customer/cart', {
         shopId: Number(selectedShopId),
+        sellerListingId: Number(selectedListing.id),
         productId: product.id,
         productVariantId: Number(selectedVariantId),
         quantity: Number(quantity),
@@ -2292,7 +2726,6 @@ export default function CustomerProductDetail() {
 
   return (
     <div className="mx-auto w-full max-w-none space-y-5 pb-10">
-
       {/* Breadcrumb */}
       <nav className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
         <Link to="/" className="hover:text-indigo-600">
@@ -2317,11 +2750,9 @@ export default function CustomerProductDetail() {
 
       {/* Main Layout */}
       <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-12">
-
         {/* LEFT: Product Images */}
         <div className="space-y-3 lg:col-span-5">
           <div className="relative flex aspect-square w-full items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-white p-3">
-
             {activeImage ? (
               <img
                 src={activeImage}
@@ -2391,11 +2822,39 @@ export default function CustomerProductDetail() {
               ))}
             </div>
           )}
+
+          {/* Product Description - Below Product Image */}
+          {product.description && (
+            <div className="rounded-xl border border-slate-200 bg-white p-4">
+              <h2 className="mb-2 text-base font-bold text-slate-900">
+                Product Description
+              </h2>
+
+              <p className="whitespace-pre-line break-words text-sm leading-6 text-slate-600">
+                {descriptionExpanded
+                  ? product.description
+                  : product.description.length > 220
+                    ? `${product.description.slice(0, 220).trimEnd()}...`
+                    : product.description}
+              </p>
+
+              {product.description.length > 220 && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setDescriptionExpanded((previous) => !previous)
+                  }
+                  className="mt-2 text-sm font-semibold text-indigo-600 hover:text-indigo-800"
+                >
+                  {descriptionExpanded ? 'Read less' : 'Read more'}
+                </button>
+              )}
+            </div>
+          )}
         </div>
 
         {/* RIGHT: Details, Purchase and Reviews */}
         <div className="min-w-0 space-y-5 lg:col-span-7">
-
           {/* Product Information */}
           <div>
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -2430,27 +2889,42 @@ export default function CustomerProductDetail() {
               )}
             </div>
 
-            <p className="mt-3 text-sm leading-relaxed text-slate-600">
-              {product.description || 'No description provided.'}
-            </p>
+            {/* NEW: Short Product Description */}
+            {product.shortDescription?.trim() && (
+              <p className="mt-3 max-w-3xl whitespace-pre-line break-words text-sm leading-6 text-slate-600">
+                {product.shortDescription}
+              </p>
+            )}
           </div>
 
           {/* Price and Stock */}
           <div className="border-b border-slate-200 pb-4">
             <div className="flex flex-wrap items-baseline gap-2">
               <span className="text-3xl font-extrabold text-slate-900">
-                ₹{price.toFixed(2)}
+                {price == null
+                  ? 'No seller available'
+                  : `₹${price.toFixed(2)}`}
               </span>
 
-              <span className="text-xs text-slate-500">
-                {selectedListing?.gstApplicable
-                  ? `GST ${Number(selectedListing.gstRate).toFixed(2)}% ${selectedListing.priceIncludesGst ? 'included in price' : 'added at checkout'}`
-                  : 'No product GST configured'}
-              </span>
+              {selectedListing && (
+                <span className="text-xs text-slate-500">
+                  {selectedListing.gstApplicable
+                    ? `GST ${Number(selectedListing.gstRate).toFixed(2)}% ${
+                        selectedListing.priceIncludesGst
+                          ? 'included in price'
+                          : 'added at checkout'
+                      }`
+                    : 'No product GST configured'}
+                </span>
+              )}
             </div>
 
             <div className="mt-2">
-              {currentStock > 0 ? (
+              {sellersLoading ? (
+                <span className="text-xs text-slate-500">
+                  Checking availability...
+                </span>
+              ) : currentStock > 0 ? (
                 <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
                   In Stock · {currentStock} available
                 </span>
@@ -2462,11 +2936,9 @@ export default function CustomerProductDetail() {
             </div>
           </div>
 
-          {/* Size Selector and Seller Selector */}
+          {/* Size Selector */}
           {product.variants?.length > 0 && (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-
-              {/* Size */}
               {sizeOptions.length > 0 && (
                 <div className="min-w-0">
                   <h3 className="mb-3 text-sm font-bold text-slate-900">
@@ -2475,13 +2947,15 @@ export default function CustomerProductDetail() {
 
                   <div className="flex flex-wrap gap-2">
                     {sizeOptions.map((size) => {
-                      const matchingVariant = findMatchingVariant({
-                        size,
-                        color: selectedColor,
-                      }) || findMatchingVariant({
-                        size,
-                        color: null,
-                      });
+                      const matchingVariant =
+                        findMatchingVariant({
+                          size,
+                          color: selectedColor,
+                        }) ||
+                        findMatchingVariant({
+                          size,
+                          color: null,
+                        });
 
                       const selected =
                         String(selectedSize).toLowerCase() ===
@@ -2489,10 +2963,13 @@ export default function CustomerProductDetail() {
 
                       const optionPrice = matchingVariant
                         ? getVariantOptionPrice(matchingVariant)
-                        : 0;
+                        : null;
 
                       const available = matchingVariant?.listings?.some(
-                        (listing) => Number(listing.stock) > 0
+                        (listing) =>
+                          Number(
+                            listing.availableStock ?? listing.stock
+                          ) > 0
                       );
 
                       return (
@@ -2511,7 +2988,9 @@ export default function CustomerProductDetail() {
                           </span>
 
                           <span className="mt-1 block text-xs">
-                            ₹{optionPrice.toFixed(2)}
+                            {optionPrice == null
+                              ? 'No seller'
+                              : `From ₹${optionPrice.toFixed(2)}`}
                           </span>
 
                           {!available && (
@@ -2525,36 +3004,6 @@ export default function CustomerProductDetail() {
                   </div>
                 </div>
               )}
-
-              {/* Seller beside size */}
-              {selectedVariant?.listings?.length > 0 && (
-                <div className="min-w-0">
-                  <label className="mb-3 block text-sm font-bold text-slate-900">
-                    Select Seller
-                  </label>
-
-                  <select
-                    value={selectedListing?.shopId || ''}
-                    onChange={(event) => {
-                      setSelectedShopId(Number(event.target.value));
-                      setQuantity(1);
-                      setError('');
-                    }}
-                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
-                  >
-                    {selectedVariant.listings.map((listing) => (
-                      <option
-                        key={listing.shopId}
-                        value={listing.shopId}
-                      >
-                        {listing.shopName} — ₹
-                        {Number(listing.retailPrice || 0).toFixed(2)}
-                        {' '}({listing.stock} in stock)
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
             </div>
           )}
 
@@ -2563,6 +3012,7 @@ export default function CustomerProductDetail() {
             <div>
               <h3 className="mb-3 text-sm font-bold text-slate-900">
                 Select Color
+
                 {selectedColor && (
                   <span className="ml-2 font-normal text-slate-500">
                     {selectedColor}
@@ -2572,20 +3022,23 @@ export default function CustomerProductDetail() {
 
               <div className="flex flex-wrap gap-2">
                 {colorOptions.map((color) => {
-                  const matchingVariant = findMatchingVariant({
-                    size: selectedSize,
-                    color,
-                  }) || findMatchingVariant({
-                    size: null,
-                    color,
-                  });
+                  const matchingVariant =
+                    findMatchingVariant({
+                      size: selectedSize,
+                      color,
+                    }) ||
+                    findMatchingVariant({
+                      size: null,
+                      color,
+                    });
 
                   const selected =
                     String(selectedColor).toLowerCase() ===
                     String(color).toLowerCase();
 
                   const available = matchingVariant?.listings?.some(
-                    (listing) => Number(listing.stock) > 0
+                    (listing) =>
+                      Number(listing.stock) > 0
                   );
 
                   return (
@@ -2613,7 +3066,7 @@ export default function CustomerProductDetail() {
             </div>
           )}
 
-          {/* Generic Variant Selector: fallback when no size or color attributes exist */}
+          {/* Generic Variant Selector */}
           {product.variants?.length > 0 &&
             sizeOptions.length === 0 &&
             colorOptions.length === 0 && (
@@ -2632,7 +3085,10 @@ export default function CustomerProductDetail() {
                       getVariantOptionPrice(variant);
 
                     const available = variant.listings?.some(
-                      (listing) => Number(listing.stock) > 0
+                      (listing) =>
+                        Number(
+                          listing.availableStock ?? listing.stock
+                        ) > 0
                     );
 
                     return (
@@ -2653,7 +3109,9 @@ export default function CustomerProductDetail() {
                         </span>
 
                         <span className="mt-1 block text-xs">
-                          ₹{variantPrice.toFixed(2)}
+                          {variantPrice == null
+                            ? 'No seller'
+                            : `From ₹${variantPrice.toFixed(2)}`}
                         </span>
 
                         {!available && (
@@ -2665,37 +3123,6 @@ export default function CustomerProductDetail() {
                     );
                   })}
                 </div>
-              </div>
-            )}
-
-          {/* Seller Selection fallback when no size selector exists */}
-          {sizeOptions.length === 0 &&
-            selectedVariant?.listings?.length > 0 && (
-              <div>
-                <label className="mb-2 block text-sm font-bold text-slate-900">
-                  Select Seller
-                </label>
-
-                <select
-                  value={selectedListing?.shopId || ''}
-                  onChange={(event) => {
-                    setSelectedShopId(Number(event.target.value));
-                    setQuantity(1);
-                    setError('');
-                  }}
-                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
-                >
-                  {selectedVariant.listings.map((listing) => (
-                    <option
-                      key={listing.shopId}
-                      value={listing.shopId}
-                    >
-                      {listing.shopName} — ₹
-                      {Number(listing.retailPrice || 0).toFixed(2)}
-                      {' '}({listing.stock} in stock)
-                    </option>
-                  ))}
-                </select>
               </div>
             )}
 
@@ -2765,7 +3192,12 @@ export default function CustomerProductDetail() {
           <div className="flex items-center gap-3 border-b border-slate-200 pb-5">
             <Button
               onClick={handleAddToCart}
-              disabled={addingToCart || currentStock <= 0}
+              disabled={
+                addingToCart ||
+                sellersLoading ||
+                !selectedListing ||
+                currentStock <= 0
+              }
               className="flex-1 justify-center py-2 text-sm font-semibold shadow-sm"
             >
               {addingToCart
@@ -2793,7 +3225,7 @@ export default function CustomerProductDetail() {
             </button>
           </div>
 
-          {/* Sold By */}
+          {/* Sold By - retained instead of the seller dropdown */}
           {selectedListing && (
             <div className="rounded-xl border border-slate-200 bg-white p-4">
               <h3 className="mb-3 text-sm font-bold text-slate-900">
@@ -2807,7 +3239,7 @@ export default function CustomerProductDetail() {
                   </p>
 
                   <p className="mt-1 text-xs text-slate-500">
-                    Your selected seller
+                    Seller of this product
                   </p>
                 </div>
 
@@ -2820,7 +3252,6 @@ export default function CustomerProductDetail() {
 
           {/* Customer Reviews */}
           <section className="space-y-4 border-t border-slate-200 pt-5">
-
             <div>
               <h2 className="text-lg font-bold text-slate-900">
                 Product Ratings & Reviews
@@ -2896,7 +3327,7 @@ export default function CustomerProductDetail() {
               </div>
             </div>
 
-            {/* Write a Review */}
+            {/* Review Eligibility */}
             {user?.role === 'customer' &&
               reviewEligibility.loading && (
                 <div
@@ -2954,6 +3385,7 @@ export default function CustomerProductDetail() {
                 </div>
               )}
 
+            {/* Write a Review */}
             {user?.role === 'customer' &&
               (reviewEligibility.eligible || reviewEditing) && (
                 <form
@@ -3216,6 +3648,13 @@ export default function CustomerProductDetail() {
                     <h3 className="line-clamp-2 min-h-10 text-sm font-semibold text-slate-800 group-hover:text-indigo-700">
                       {item.name}
                     </h3>
+
+                    {/* NEW: Short Description in Related Products */}
+                    {item.shortDescription?.trim() && (
+                      <p className="line-clamp-2 text-xs leading-5 text-slate-500">
+                        {item.shortDescription}
+                      </p>
+                    )}
 
                     {relatedPrice > 0 && (
                       <p className="text-base font-bold text-slate-900">

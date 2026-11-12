@@ -14,7 +14,10 @@ const superAdmin = [
       { label: 'All Shops', to: '/admin/shops' },
       { label: 'Manage Employees', to: '/admin/employees' },
       { label: 'Orders', to: '/admin/orders' },
+      
+
       { label: 'Reports', to: '/admin/reports' },
+      { label: 'Wholesalers', to: '/admin/wholesalers' },
     ],
   },
   {
@@ -27,7 +30,7 @@ const superAdmin = [
       { label: 'Manage Products', to: '/admin/catalog/products' },
     ],
   },
-  { label: 'Wholesalers', to: '/admin/wholesalers' },
+  // { label: 'Wholesalers', to: '/admin/wholesalers' },
   //{ label: 'Shop–Wholesaler Access', to: '/admin/access' },
   { label: 'Audit Logs', to: '/admin/audit-logs' },
 ];
@@ -85,7 +88,9 @@ const shopOwner = [
   { label: 'Roles & Permissions', to: '/shop/roles-permissions' },
 
   { label: 'Orders', to: '/shop/orders', permission: 'orders.view' },
-  { label: 'Coupons', to: '/shop/coupons' },
+  // { label: 'Coupons', to: '/shop/coupons' },
+  { label: 'Returns & Refunds', to: '/shop/returns', permission: 'returns.view' },
+
   { label: 'Payments', to: '/shop/payments', permission: 'payments.view' },
 
   // Correct Shop Owner delivery management URL
@@ -94,6 +99,7 @@ const shopOwner = [
   { label: 'Reports', to: '/shop/reports', permission: 'reports.view' },
   { label: 'Settings', to: '/shop/settings', permission: 'shop_settings.manage' },
   { label: 'Inventory', to: '/shop/inventory', permission: 'inventory.view' },
+  { label: 'Coupons', to: '/shop/coupons' },
   { label: 'Customer Store', to: '/customer' },
 ];
 
@@ -193,7 +199,7 @@ export function menuFor(user) {
       (item) =>
         item.to !== '/customer' &&
         item.to !== '/shop/roles-permissions' &&
-        item.to !== '/shop/coupons',
+        item.to !== '',
     ).map((item) =>
       role === 'delivery_associate' && item.to === '/shop/dashboard'
         ? { ...item, to: '/shop/delivery' }

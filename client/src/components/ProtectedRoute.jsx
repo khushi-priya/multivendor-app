@@ -1,17 +1,3 @@
-// import { Navigate, Outlet, useLocation } from 'react-router-dom';
-// import { useAuth, homePath } from '../context/AuthContext.jsx';
-// import { Spinner } from './ui.jsx';
-
-// // UI guard only. The API enforces the same rules independently on every request.
-// export default function ProtectedRoute({ roles, shopRoles }) {
-//   const { user, loading } = useAuth();
-//   const location = useLocation();
-//   if (loading) return <Spinner />;
-//   if (!user) return <Navigate to="/login" replace state={{ from: location.pathname }} />;
-//   if (roles && !roles.includes(user.role)) return <Navigate to={homePath(user)} replace />;
-//   if (shopRoles && !shopRoles.includes(user.shop?.role)) return <Navigate to={homePath(user)} replace />;
-//   return <Outlet />;
-// }
 
 
 import { Link, Navigate, Outlet, useLocation } from 'react-router-dom';

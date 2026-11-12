@@ -401,74 +401,7 @@ router.get(
   }),
 );
 
-/* ========================================================================== */
-/*                               WHOLESALERS                                  */
-/* ========================================================================== */
-// router.get(
-//   "/wholesalers",
-//   requireShopAccess(WHOLESALE_ROLES),
-//   wrap(async (req, res) => {
-//     const grants = await WholesalerShopAccess.findAll({
-//       where: { shopId: req.shop.id },
-//       include: [{ model: Wholesaler, as: "wholesaler" }],
-//       order: [[{ model: Wholesaler, as: "wholesaler" }, "name", "ASC"]],
-//     });
-//     const wholesalerIds = grants.map((grant) => grant.wholesalerId);
-//     const [orders, payments] = wholesalerIds.length
-//       ? await Promise.all([
-//           PurchaseOrder.findAll({
-//             where: { shopId: req.shop.id, wholesalerId: wholesalerIds },
-//             attributes: ["wholesalerId", "totalAmount", "status"],
-//             raw: true,
-//           }),
-//           WholesalePayment.findAll({
-//             where: { shopId: req.shop.id, wholesalerId: wholesalerIds },
-//             attributes: ["wholesalerId", "amount"],
-//             raw: true,
-//           }),
-//         ])
-//       : [[], []];
-//     const summaries = new Map(
-//       wholesalerIds.map((id) => [
-//         Number(id),
-//         { openPurchaseOrders: 0, purchaseTotalCents: 0, paidTotalCents: 0 },
-//       ]),
-//     );
-//     for (const order of orders) {
-//       const summary = summaries.get(Number(order.wholesalerId));
-//       if (!summary) continue;
-//       if (!["completed", "cancelled"].includes(order.status)) {
-//         summary.openPurchaseOrders += 1;
-//       }
-//       if (!["cancelled", "rejected"].includes(order.status)) {
-//         summary.purchaseTotalCents += cents(order.totalAmount);
-//       }
-//     }
-//     for (const payment of payments) {
-//       const summary = summaries.get(Number(payment.wholesalerId));
-//       if (summary) summary.paidTotalCents += cents(payment.amount);
-//     }
-//     res.json({
-//       items: grants.map((grant) => {
-//         const wholesaler = grant.wholesaler;
-//         const summary = summaries.get(Number(wholesaler.id));
-//         // return {
-//         //   ...wholesaler.toJSON(),
-//         //   code: `WH-${String(wholesaler.id).padStart(6, "0")}`,
-//         return {
-//   ...wholesaler.toJSON(),
-//   status: grant.status,
-//   code: `WH-${String(wholesaler.id).padStart(6, "0")}`,
-//           openPurchaseOrders: summary.openPurchaseOrders,
-//           outstandingAmount: Math.max(
-//             0,
-//             summary.purchaseTotalCents - summary.paidTotalCents,
-//           ) / 100,
-//         };
-//       }),
-//     });
-//   }),
-// );
+
 
 router.get(
   "/wholesalers",
@@ -566,82 +499,6 @@ router.get(
   }),
 );
 
-// router.patch(
-//   "/wholesalers/:id",
-//   requireShopAccess(WHOLESALE_ROLES),
-//   validate(
-//     z.object({
-//       status: z.enum(["active", "inactive"]),
-//     }),
-//   ),
-// router.patch(
-//   "/wholesalers/:id",
-//   requireShopAccess(WHOLESALE_ROLES),
-//   validate(
-//     z.object({
-//       status: z.enum(["active", "inactive"]),
-//     }),
-//   ),
-//   // Keep your existing wrap callback.
-// );
-//   wrap(async (req, res) => {
-//     const id = idParam(req, "id");
-
-//     const grant = await WholesalerShopAccess.findOne({
-//       where: {
-//         shopId: req.shop.id,
-//         wholesalerId: id,
-//       },
-//     });
-
-//     if (!grant) {
-//       throw new AppError(404, "Wholesaler not found for this shop.");
-//     }
-
-//     const updated = await sequelize.transaction(async (transaction) => {
-//       const lockedGrant = await WholesalerShopAccess.findOne({
-//         where: {
-//           shopId: req.shop.id,
-//           wholesalerId: id,
-//         },
-//         transaction,
-//         lock: transaction.LOCK.UPDATE,
-//       });
-//       if (!lockedGrant) {
-//         throw new AppError(404, "Wholesaler not found for this shop.");
-//       }
-
-//       const previousStatus = lockedGrant.status;
-//       await lockedGrant.update(
-//         { status: req.valid.status },
-//         { transaction },
-//       );
-//       await audit(
-//         {
-//           actorId: req.user.id,
-//           action: "wholesaler.status_updated",
-//           entityType: "wholesaler",
-//           entityId: id,
-//           shopId: req.shop.id,
-//           meta: {
-//             previousStatus,
-//             newStatus: lockedGrant.status,
-//           },
-//           ip: req.ip,
-//         },
-//         transaction,
-//       );
-//       return lockedGrant;
-//     });
-
-//     res.json({
-//       message: "Wholesaler status updated successfully.",
-//       item: {
-//         id: updated.wholesalerId,
-//         status: updated.status,
-//       },
-//     });
-//   });
 
 const updateShopWholesalerSchema = z.object({
   name: z.string().trim().min(2).max(150).optional(),
@@ -2181,14 +2038,6 @@ router.get(
     if (brandId) where.brandId = brandId;
     if (q) where.name = { [Op.like]: `%${q}%` };
 
-    const ownedListings = await SellerListing.findAll({
-      where: { shopId: req.shop.id },
-      attributes: ["productId"],
-      raw: true,
-    });
-    where.id = {
-      [Op.in]: [...new Set(ownedListings.map((row) => row.productId))],
-    };
     const { rows, count } = await Product.findAndCountAll({
       where,
       include: [
@@ -2278,7 +2127,7 @@ router.patch(
         .array(
           z.object({
             id: z.coerce.number().int().positive(),
-            retailPrice: money,
+            retailPrice: money.refine((value) => value > 0, "Enter a selling price greater than zero."),
             quantity: z.coerce.number().int().min(0).max(10000000),
             isActive: z.boolean().optional(),
             gstApplicable: z.boolean().optional(),
@@ -2287,7 +2136,18 @@ router.patch(
             hsnCode: z.string().trim().max(20).nullable().optional(),
           }),
         )
-        .min(1),
+        .min(1)
+        .superRefine((variants, context) => {
+          variants.forEach((variant, index) => {
+            if (variant.gstApplicable && !(Number(variant.gstRate) > 0)) {
+              context.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: [index, "gstRate"],
+                message: "Enter a GST rate greater than zero when GST applies.",
+              });
+            }
+          });
+        }),
     }),
   ),
   wrap(async (req, res) => {
@@ -2303,10 +2163,17 @@ router.patch(
     ) {
       throw new AppError(403, "Only the Shop Owner can configure product tax details.");
     }
-    const product = await Product.findByPk(productId);
+    const product = await Product.findOne({ where: { id: productId, isActive: true } });
     if (!product) throw new AppError(404, "Product not found");
     await sequelize.transaction(async (t) => {
       for (const row of req.valid.variants) {
+        const variant = await ProductVariant.findOne({
+          where: { id: row.id, productId, isActive: true },
+          transaction: t,
+        });
+        if (!variant) {
+          throw new AppError(404, "A product variant is not available in this catalog product.");
+        }
         const listing = await SellerListing.findOne({
           where: { shopId: req.shop.id, productId, productVariantId: row.id },
           transaction: t,
@@ -2315,25 +2182,37 @@ router.patch(
           where: { shopId: req.shop.id, productId, productVariantId: row.id },
           transaction: t,
         });
-        if (!listing || !inventory)
-          throw new AppError(
-            404,
-            "A product variant is not listed by this shop.",
-          );
-        await listing.update(
-          {
+        const listingValues = {
             retailPrice: moneyValue(cents(row.retailPrice)),
-            ...(row.isActive === undefined ? {} : { isActive: row.isActive }),
+            isActive: row.isActive ?? listing?.isActive ?? true,
             ...(row.gstApplicable === undefined ? {} : {
               gstApplicable: row.gstApplicable,
               gstRate: row.gstApplicable ? row.gstRate || 0 : 0,
               priceIncludesGst: row.gstApplicable ? row.priceIncludesGst ?? false : false,
               hsnCode: row.gstApplicable ? row.hsnCode || null : null,
             }),
-          },
-          { transaction: t },
-        );
-        await inventory.update({ quantity: row.quantity }, { transaction: t });
+        };
+        if (listing) {
+          await listing.update(listingValues, { transaction: t });
+        } else {
+          await SellerListing.create({
+            shopId: req.shop.id,
+            productId,
+            productVariantId: row.id,
+            ...listingValues,
+          }, { transaction: t });
+        }
+        if (inventory) {
+          await inventory.update({ quantity: row.quantity }, { transaction: t });
+        } else {
+          await Inventory.create({
+            shopId: req.shop.id,
+            productId,
+            productVariantId: row.id,
+            quantity: row.quantity,
+            lowStockThreshold: 5,
+          }, { transaction: t });
+        }
       }
     });
     res.json({ success: true });

@@ -190,6 +190,8 @@ router.get(
           priceIncludesGst: l.priceIncludesGst,
           hsnCode: l.hsnCode,
           stock: stockMap[`${l.shopId}_${v.id}`] || 0,
+          availableStock: stockMap[`${l.shopId}_${v.id}`] || 0,
+          listingStatus: l.isActive ? 'active' : 'inactive',
         }));
         return {
           ...v,
@@ -222,6 +224,7 @@ router.get('/products/:id/reviews', validate(z.object({ page: z.coerce.number().
 
 router.get(
   '/products/:id',
+  validate(z.object({ variantId: z.coerce.number().int().positive().optional() }), 'query'),
   wrap(async (req, res) => {
     const product = await Product.findOne({
       where: { id: idParam(req, 'id'), isActive: true },
@@ -253,6 +256,9 @@ router.get(
 
     const json = product.toJSON();
     const variantIds = json.variants.map((v) => v.id);
+    if (req.valid.variantId && !variantIds.includes(req.valid.variantId)) {
+      throw new AppError(404, 'Product variant not found');
+    }
 
     const [listings, stockList] = await Promise.all([
       SellerListing.findAll({
@@ -275,20 +281,55 @@ router.get(
 
     json.variants = json.variants.map((v) => ({
       ...v,
-      listings: (listingsByVariant[v.id] || []).map((l) => ({
-        id: l.id,
-        shopId: l.shopId,
-        shopName: l.shop?.name,
-        retailPrice: Number(l.retailPrice),
-        gstApplicable: l.gstApplicable,
-        gstRate: Number(l.gstRate || 0),
-        priceIncludesGst: l.priceIncludesGst,
-        hsnCode: l.hsnCode,
-        stock: stockMap[`${l.shopId}_${v.id}`] || 0,
-      })),
+      listings: (listingsByVariant[v.id] || [])
+        .map((l) => {
+          const availableStock = Number(stockMap[`${l.shopId}_${v.id}`] || 0);
+          if (availableStock <= 0) return null;
+          return {
+            id: l.id,
+            shopId: l.shopId,
+            shopName: l.shop?.name,
+            retailPrice: Number(l.retailPrice),
+            gstApplicable: l.gstApplicable,
+            gstRate: Number(l.gstRate || 0),
+            priceIncludesGst: l.priceIncludesGst,
+            hsnCode: l.hsnCode,
+            stock: availableStock,
+            availableStock,
+            listingStatus: l.isActive ? 'active' : 'inactive',
+          };
+        })
+        .filter(Boolean),
     }));
 
-    res.json({ product: json });
+    const response = { product: json };
+    if (req.valid.variantId) {
+      const variantId = req.valid.variantId;
+      response.sellers = (listingsByVariant[variantId] || [])
+        .flatMap((listing) => {
+          const availableStock = Number(stockMap[`${listing.shopId}_${variantId}`] || 0);
+          if (availableStock <= 0) return [];
+          return [{
+            id: listing.id,
+            listingId: listing.id,
+            productId: listing.productId,
+            variantId: listing.productVariantId,
+            shopId: listing.shopId,
+            shopName: listing.shop?.name,
+            sellingPrice: Number(listing.retailPrice),
+            retailPrice: Number(listing.retailPrice),
+            gstPercentage: Number(listing.gstRate || 0),
+            gstApplicable: listing.gstApplicable,
+            priceIncludesGst: listing.priceIncludesGst,
+            hsnCode: listing.hsnCode,
+            availableStock,
+            stock: availableStock,
+            listingStatus: 'active',
+          }];
+        })
+        .sort((left, right) => left.sellingPrice - right.sellingPrice);
+    }
+    res.json(response);
   }),
 );
 
